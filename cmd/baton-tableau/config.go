@@ -16,6 +16,7 @@ type config struct {
 	AccessTokenSecret string `mapstructure:"access-token-secret"`
 	ServerPath        string `mapstructure:"server-path"`
 	SiteID            string `mapstructure:"site-id"`
+	APIVersion        string `mapstructure:"api-version"`
 }
 
 // validateConfig is run after the configuration is loaded, and should return an error if it isn't valid.
@@ -40,4 +41,5 @@ func cmdFlags(cmd *cobra.Command) {
 	cmd.PersistentFlags().String("access-token-secret", "", "Secret of the personal access token used to connect to the Tableau API. ($BATON_ACCESS_TOKEN_SECRET)")
 	cmd.PersistentFlags().String("server-path", "", "Base url of your server or Tableau Cloud. ($BATON_SERVER_PATH)")
 	cmd.PersistentFlags().String("site-id", "", "On server it's referred as Site ID, on cloud it appears after /site/ in the Browser address bar. ($BATON_SITE_ID)")
+	cmd.PersistentFlags().String("api-version", "3.17", "API version of your server or Tableau Cloud. ($BATON_API_VERSION)")
 }
