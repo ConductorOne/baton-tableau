@@ -42,6 +42,7 @@ baton resources
 - Sites
 - Users
 - Groups
+- Licenses
 
 # Contributing, Support and Issues
 
