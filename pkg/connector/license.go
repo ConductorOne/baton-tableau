@@ -8,10 +8,11 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
+
 	"github.com/conductorone/baton-tableau/pkg/tableau"
 
 	ent "github.com/conductorone/baton-sdk/pkg/types/entitlement"
-	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
+	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
 )
 
@@ -82,7 +83,7 @@ func (l *licenseResourceType) Entitlements(_ context.Context, resource *v2.Resou
 }
 
 func (l *licenseResourceType) Grants(ctx context.Context, resource *v2.Resource, pt *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
-	users, err := l.client.GetPaginatedUsers(ctx)
+	users, token, err := l.client.GetUsersPage(ctx, pt.Token)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -101,7 +102,7 @@ func (l *licenseResourceType) Grants(ctx context.Context, resource *v2.Resource,
 		}
 	}
 
-	return rv, "", nil, nil
+	return rv, token, nil, nil
 }
 
 func licenseBuilder(client *tableau.Client) *licenseResourceType {
