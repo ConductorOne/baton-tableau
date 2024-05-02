@@ -164,6 +164,50 @@ func (c *Client) GetGroupUsers(ctx context.Context, groupId string, pageSize int
 	return res.Users.User, res.Pagination, nil
 }
 
+type usersToken struct {
+	Page int64 `json:"page"`
+}
+
+func (c *Client) GetUsersPage(ctx context.Context, token string) ([]User, string, error) {
+	var users []User
+	pageNumber := defaultPageNumber
+	uToken := &usersToken{}
+	if err := json.Unmarshal([]byte(token), &uToken); err == nil {
+		pageNumber = int(uToken.Page)
+	}
+	totalReturned := 0
+
+	allUsers, paginationData, err := c.GetUsers(ctx, defaultPageSize, pageNumber)
+	if err != nil {
+		return nil, "", fmt.Errorf("tableau-connector: failed to list users: %w", err)
+	}
+
+	pageSizeInt, err := strconv.Atoi(paginationData.PageSize)
+	if err != nil {
+		return nil, "", err
+	}
+
+	totalReturned += pageSizeInt
+	totalAvailableInt, err := strconv.Atoi(paginationData.TotalAvailable)
+	if err != nil {
+		return nil, "", err
+	}
+
+	users = append(users, allUsers...)
+
+	if totalReturned >= totalAvailableInt {
+		return users, "", nil
+	}
+
+	uToken.Page = int64(pageNumber + 1)
+	newToken, err := json.Marshal(uToken)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return users, string(newToken), nil
+}
+
 // GetPaginatedUsers returns all users - paginated.
 func (c *Client) GetPaginatedUsers(ctx context.Context) ([]User, error) {
 	var users []User
