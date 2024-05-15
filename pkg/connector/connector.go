@@ -32,6 +32,13 @@ var (
 			v2.ResourceType_TRAIT_GROUP,
 		},
 	}
+	resourceTypeLicense = &v2.ResourceType{
+		Id:          "license",
+		DisplayName: "License",
+		Traits: []v2.ResourceType_Trait{
+			v2.ResourceType_TRAIT_ROLE,
+		},
+	}
 )
 
 type Tableau struct {
@@ -83,5 +90,6 @@ func (tb *Tableau) ResourceSyncers(ctx context.Context) []connectorbuilder.Resou
 		userBuilder(tb.client),
 		siteBuilder(tb.client),
 		groupBuilder(tb.client),
+		licenseBuilder(tb.client),
 	}
 }

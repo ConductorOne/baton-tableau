@@ -16,17 +16,30 @@ import (
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
 )
 
+const (
+	siteAdministrator         = "SiteAdministrator"
+	siteAdministratorCreator  = "SiteAdministratorCreator"
+	siteAdministratorExplorer = "SiteAdministratorExplorer"
+	serverAdministrator       = "ServerAdministrator"
+	creator                   = "Creator"
+	explorer                  = "Explorer"
+	explorerCanPublish        = "ExplorerCanPublish"
+	viewer                    = "Viewer"
+	unlicensed                = "Unlicensed"
+	readOnly                  = "ReadOnly"
+)
+
 var roles = map[string]string{
-	"SiteAdministrator":         "site administrator",
-	"SiteAdministratorCreator":  "site administrator creator",
-	"SiteAdministratorExplorer": "site administrator explorer",
-	"ServerAdministrator":       "server administrator",
-	"Creator":                   "creator",
-	"Explorer":                  "explorer",
-	"ExplorerCanPublish":        "explorer can publish",
-	"Viewer":                    "viewer",
-	"Unlicensed":                "unlicensed",
-	"ReadOnly":                  "readonly",
+	siteAdministrator:         "site administrator",
+	siteAdministratorCreator:  "site administrator creator",
+	siteAdministratorExplorer: "site administrator explorer",
+	serverAdministrator:       "server administrator",
+	creator:                   "creator",
+	explorer:                  "explorer",
+	explorerCanPublish:        "explorer can publish",
+	viewer:                    "viewer",
+	unlicensed:                "unlicensed",
+	readOnly:                  "readonly",
 }
 
 type siteResourceType struct {
