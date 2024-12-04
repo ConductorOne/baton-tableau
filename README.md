@@ -67,6 +67,7 @@ Available Commands:
 Flags:
       --access-token-name string     Name of the personal access token used to connect to the Tableau API. ($BATON_ACCESS_TOKEN_NAME)
       --access-token-secret string   Secret of the personal access token used to connect to the Tableau API. ($BATON_ACCESS_TOKEN_SECRET)
+      --api-version string           API version of your server or Tableau Cloud. ($BATON_API_VERSION) (default "3.17")
       --client-id string             The client ID used to authenticate with ConductorOne ($BATON_CLIENT_ID)
       --client-secret string         The client secret used to authenticate with ConductorOne ($BATON_CLIENT_SECRET)
   -f, --file string                  The path to the c1z file to sync with ($BATON_FILE) (default "sync.c1z")
