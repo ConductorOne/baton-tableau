@@ -6,9 +6,12 @@ import (
 	"net/url"
 	"os"
 
-	"github.com/conductorone/baton-sdk/pkg/cli"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
+	"github.com/conductorone/baton-sdk/pkg/field"
 	"github.com/conductorone/baton-sdk/pkg/types"
+
+	"github.com/conductorone/baton-sdk/pkg/config"
+	cfg "github.com/conductorone/baton-tableau/pkg/config"
 	"github.com/conductorone/baton-tableau/pkg/connector"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
@@ -19,15 +22,18 @@ var version = "dev"
 func main() {
 	ctx := context.Background()
 
-	cfg := &config{}
-	cmd, err := cli.NewCmd(ctx, "baton-tableau", cfg, validateConfig, getConnector)
+	_, cmd, err := config.DefineConfiguration(
+		ctx,
+		"baton-tableau",
+		getConnector[*cfg.Tableau],
+		cfg.Config,
+	)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
 	}
 
 	cmd.Version = version
-	cmdFlags(cmd)
 
 	err = cmd.Execute()
 	if err != nil {
@@ -36,19 +42,31 @@ func main() {
 	}
 }
 
-func getConnector(ctx context.Context, cfg *config) (types.ConnectorServer, error) {
+// func getConnector(ctx context.Context, cfg *config) (types.ConnectorServer, error) {
+func getConnector[T field.Configurable](ctx context.Context, config T) (types.ConnectorServer, error) {
 	l := ctxzap.Extract(ctx)
-
-	apiVersion := "3.17"
-	if cfg.APIVersion != "" {
-		apiVersion = cfg.APIVersion
+	if err := field.Validate(cfg.Config, config); err != nil {
+		return nil, err
 	}
-	baseUrl, err := url.JoinPath("https://", cfg.ServerPath, "api", apiVersion)
+
+	apiVersion := config.GetString(cfg.APIVersion.FieldName)
+	if apiVersion == "" {
+		apiVersion = "3.17"
+	}
+
+	serverPath := config.GetString(cfg.ServerPath.FieldName)
+	baseUrl, err := url.JoinPath("https://", serverPath, "api", apiVersion)
 	if err != nil {
 		l.Error("error creating base url", zap.Error(err))
 	}
 
-	cb, err := connector.New(ctx, baseUrl, cfg.SiteID, cfg.AccessTokenName, cfg.AccessTokenSecret)
+	cb, err := connector.New(
+		ctx,
+		baseUrl,
+		config.GetString(cfg.SiteID.FieldName),
+		config.GetString(cfg.AccessTokenName.FieldName),
+		config.GetString(cfg.AccessTokenSecret.FieldName),
+	)
 	if err != nil {
 		l.Error("error creating connector", zap.Error(err))
 		return nil, err

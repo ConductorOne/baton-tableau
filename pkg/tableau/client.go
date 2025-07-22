@@ -381,6 +381,7 @@ func (c *Client) doRequest(ctx context.Context, url string, res interface{}, q u
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
+		logBody(ctx, resp)
 		return fmt.Errorf("tableau-connector: request failed with status code %d", resp.StatusCode)
 	}
 
@@ -388,6 +389,39 @@ func (c *Client) doRequest(ctx context.Context, url string, res interface{}, q u
 		if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 			return err
 		}
+	}
+
+	return nil
+}
+
+func (c *Client) AddUserToSite(ctx context.Context, user CreateUserRequest) error {
+	url := fmt.Sprint(c.baseUrl, "/sites/", c.siteId, "/users")
+	var res struct {
+		User User `json:"user"`
+	}
+
+	requestBody, err := json.Marshal(map[string]interface{}{
+		"user": map[string]interface{}{
+			"name":     user.Email,
+			"siteRole": user.SiteRole,
+		},
+	})
+
+	if err != nil {
+		return err
+	}
+
+	if err := c.doRequest(ctx, url, &res, nil, requestBody, http.MethodPost); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *Client) RemoveUserFromSite(ctx context.Context, userId string) error {
+	url := fmt.Sprint(c.baseUrl, "/sites/", c.siteId, "/users/", userId)
+	if err := c.doRequest(ctx, url, nil, nil, nil, http.MethodDelete); err != nil {
+		return err
 	}
 
 	return nil

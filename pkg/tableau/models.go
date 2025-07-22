@@ -1,5 +1,7 @@
 package tableau
 
+import "time"
+
 type Credentials struct {
 	Site                      Site   `json:"site"`
 	User                      User   `json:"user"`
@@ -14,10 +16,17 @@ type Site struct {
 }
 
 type User struct {
-	Email    string `json:"email"`
-	ID       string `json:"id"`
-	FullName string `json:"fullName"`
-	Name     string `json:"name"`
+	Email     string    `json:"email"`
+	ID        string    `json:"id"`
+	FullName  string    `json:"fullName"`
+	Name      string    `json:"name"`
+	SiteRole  string    `json:"siteRole"`
+	LastLogin time.Time `json:"lastLogin"`
+}
+
+type CreateUserRequest struct {
+	// has to be name in the payload
+	Email    string `json:"name"`
 	SiteRole string `json:"siteRole"`
 }
 
