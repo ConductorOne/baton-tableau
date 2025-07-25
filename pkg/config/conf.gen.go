@@ -4,7 +4,7 @@ package config
 import "reflect" 
 
 type Tableau struct {
-	AccessTokenName string `mapstructure:"access-token-Name"`
+	AccessTokenName string `mapstructure:"access-token-name"`
 	AccessTokenSecret string `mapstructure:"access-token-secret"`
 	ServerPath string `mapstructure:"server-path"`
 	SiteId string `mapstructure:"site-id"`

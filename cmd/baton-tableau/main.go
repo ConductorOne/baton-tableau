@@ -42,7 +42,6 @@ func main() {
 	}
 }
 
-// func getConnector(ctx context.Context, cfg *config) (types.ConnectorServer, error) {
 func getConnector[T field.Configurable](ctx context.Context, config T) (types.ConnectorServer, error) {
 	l := ctxzap.Extract(ctx)
 	if err := field.Validate(cfg.Config, config); err != nil {

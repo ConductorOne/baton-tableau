@@ -6,7 +6,7 @@ import (
 
 var (
 	AccessTokenName = field.StringField(
-		"access-token-Name",
+		"access-token-name",
 		field.WithDisplayName("Access Token Name"),
 		field.WithDescription("Access token name used to connect to the Tableau API"),
 	)
