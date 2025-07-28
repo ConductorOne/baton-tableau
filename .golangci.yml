@@ -5,6 +5,7 @@ linters:
     - asasalint
     - asciicheck
     - bidichk
+    - bodyclose
     - durationcheck
     - errcheck
     - errorlint
@@ -14,6 +15,7 @@ linters:
     - goconst
     - gocritic
     - godot
+    - gomoddirectives
     - goprintffuncname
     - gosec
     - govet

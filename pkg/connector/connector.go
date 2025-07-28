@@ -88,7 +88,8 @@ func (tb *Tableau) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) 
 				"siteRole": {
 					DisplayName: "Site Role",
 					Required:    true,
-					Description: "The role to assign to the user on the site. Possible values are: Creator, Explorer, ExplorerCanPublish, SiteAdministratorExplorer, SiteAdministratorCreator, Unlicensed, or Viewer.",
+					Description: `The role to assign to the user on the site. Possible values are: 
+					Creator, Explorer, ExplorerCanPublish, SiteAdministratorExplorer, SiteAdministratorCreator, Unlicensed, or Viewer.`,
 					Field: &v2.ConnectorAccountCreationSchema_Field_StringField{
 						StringField: &v2.ConnectorAccountCreationSchema_StringField{},
 					},
