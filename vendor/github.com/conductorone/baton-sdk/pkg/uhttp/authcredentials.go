@@ -7,24 +7,29 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 	"golang.org/x/oauth2/jwt"
 )
 
 type AuthCredentials interface {
-	GetClient(ctx context.Context) (*http.Client, error)
+	GetClient(ctx context.Context, options ...Option) (*http.Client, error)
 }
 
 type NoAuth struct{}
 
-func (n *NoAuth) GetClient(ctx context.Context) (*http.Client, error) {
-	return http.DefaultClient, nil
+var _ AuthCredentials = (*NoAuth)(nil)
+
+func (n *NoAuth) GetClient(ctx context.Context, options ...Option) (*http.Client, error) {
+	return getHttpClient(ctx, options...)
 }
 
 type BearerAuth struct {
 	Token string
 }
+
+var _ AuthCredentials = (*BearerAuth)(nil)
 
 func NewBearerAuth(token string) *BearerAuth {
 	return &BearerAuth{
@@ -32,10 +37,10 @@ func NewBearerAuth(token string) *BearerAuth {
 	}
 }
 
-func (b *BearerAuth) GetClient(ctx context.Context) (*http.Client, error) {
-	httpClient, err := NewClient(ctx, WithLogger(true, nil))
+func (b *BearerAuth) GetClient(ctx context.Context, options ...Option) (*http.Client, error) {
+	httpClient, err := getHttpClient(ctx, options...)
 	if err != nil {
-		return nil, fmt.Errorf("creating HTTP client failed: %w", err)
+		return nil, err
 	}
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 	ts := oauth2.StaticTokenSource(
@@ -51,6 +56,8 @@ type BasicAuth struct {
 	Password string
 }
 
+var _ AuthCredentials = (*BasicAuth)(nil)
+
 func NewBasicAuth(username, password string) *BasicAuth {
 	return &BasicAuth{
 		Username: username,
@@ -58,10 +65,10 @@ func NewBasicAuth(username, password string) *BasicAuth {
 	}
 }
 
-func (b *BasicAuth) GetClient(ctx context.Context) (*http.Client, error) {
-	httpClient, err := NewClient(ctx, WithLogger(true, nil))
+func (b *BasicAuth) GetClient(ctx context.Context, options ...Option) (*http.Client, error) {
+	httpClient, err := getHttpClient(ctx, options...)
 	if err != nil {
-		return nil, fmt.Errorf("creating HTTP client failed: %w", err)
+		return nil, err
 	}
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 	auth := b.Username + ":" + b.Password
@@ -78,6 +85,8 @@ type OAuth2ClientCredentials struct {
 	cfg *clientcredentials.Config
 }
 
+var _ AuthCredentials = (*OAuth2ClientCredentials)(nil)
+
 func NewOAuth2ClientCredentials(clientId, clientSecret string, tokenURL *url.URL, scopes []string) *OAuth2ClientCredentials {
 	return &OAuth2ClientCredentials{
 		cfg: &clientcredentials.Config{
@@ -89,10 +98,10 @@ func NewOAuth2ClientCredentials(clientId, clientSecret string, tokenURL *url.URL
 	}
 }
 
-func (o *OAuth2ClientCredentials) GetClient(ctx context.Context) (*http.Client, error) {
-	httpClient, err := NewClient(ctx, WithLogger(true, nil))
+func (o *OAuth2ClientCredentials) GetClient(ctx context.Context, options ...Option) (*http.Client, error) {
+	httpClient, err := getHttpClient(ctx, options...)
 	if err != nil {
-		return nil, fmt.Errorf("creating HTTP client failed: %w", err)
+		return nil, err
 	}
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 	ts := o.cfg.TokenSource(ctx)
@@ -109,6 +118,8 @@ type OAuth2JWT struct {
 	CreateJWTConfig CreateJWTConfig
 }
 
+var _ AuthCredentials = (*OAuth2JWT)(nil)
+
 func NewOAuth2JWT(credentials []byte, scopes []string, createfn CreateJWTConfig) *OAuth2JWT {
 	return &OAuth2JWT{
 		Credentials:     credentials,
@@ -117,10 +128,10 @@ func NewOAuth2JWT(credentials []byte, scopes []string, createfn CreateJWTConfig)
 	}
 }
 
-func (o *OAuth2JWT) GetClient(ctx context.Context) (*http.Client, error) {
-	httpClient, err := NewClient(ctx, WithLogger(true, nil))
+func (o *OAuth2JWT) GetClient(ctx context.Context, options ...Option) (*http.Client, error) {
+	httpClient, err := getHttpClient(ctx, options...)
 	if err != nil {
-		return nil, fmt.Errorf("creating HTTP client failed: %w", err)
+		return nil, err
 	}
 
 	jwt, err := o.CreateJWTConfig(o.Credentials, o.Scopes...)
@@ -131,6 +142,58 @@ func (o *OAuth2JWT) GetClient(ctx context.Context) (*http.Client, error) {
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 	ts := jwt.TokenSource(ctx)
 	httpClient = oauth2.NewClient(ctx, ts)
+
+	return httpClient, nil
+}
+
+func getHttpClient(ctx context.Context, options ...Option) (*http.Client, error) {
+	options = append(options, WithLogger(true, ctxzap.Extract(ctx)))
+
+	httpClient, err := NewClient(ctx, options...)
+	if err != nil {
+		return nil, fmt.Errorf("creating HTTP client failed: %w", err)
+	}
+
+	return httpClient, nil
+}
+
+type OAuth2RefreshToken struct {
+	cfg          *oauth2.Config
+	accessToken  string
+	refreshToken string
+}
+
+var _ AuthCredentials = (*OAuth2RefreshToken)(nil)
+
+func NewOAuth2RefreshToken(clientID, clientSecret, redirectURI, tokenURL, accessToken, refreshToken string, scopes []string) *OAuth2RefreshToken {
+	return &OAuth2RefreshToken{
+		cfg: &oauth2.Config{
+			ClientID:     clientID,
+			ClientSecret: clientSecret,
+			Scopes:       scopes,
+			RedirectURL:  redirectURI,
+			Endpoint: oauth2.Endpoint{
+				TokenURL: tokenURL,
+			},
+		},
+		accessToken:  accessToken,
+		refreshToken: refreshToken,
+	}
+}
+
+func (o *OAuth2RefreshToken) GetClient(ctx context.Context, options ...Option) (*http.Client, error) {
+	httpClient, err := getHttpClient(ctx, options...)
+	if err != nil {
+		return nil, err
+	}
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
+
+	token := &oauth2.Token{
+		AccessToken:  o.accessToken,
+		RefreshToken: o.refreshToken,
+		TokenType:    "Bearer",
+	}
+	httpClient = o.cfg.Client(ctx, token)
 
 	return httpClient, nil
 }

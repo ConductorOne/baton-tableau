@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"time"
 
-	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
-	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
+
+	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
+	"github.com/conductorone/baton-sdk/pkg/annotations"
 )
 
 type UserTraitOption func(ut *v2.UserTrait) error
@@ -15,6 +16,14 @@ type UserTraitOption func(ut *v2.UserTrait) error
 func WithStatus(status v2.UserTrait_Status_Status) UserTraitOption {
 	return func(ut *v2.UserTrait) error {
 		ut.Status = &v2.UserTrait_Status{Status: status}
+
+		return nil
+	}
+}
+
+func WithDetailedStatus(status v2.UserTrait_Status_Status, details string) UserTraitOption {
+	return func(ut *v2.UserTrait) error {
+		ut.Status = &v2.UserTrait_Status{Status: status, Details: details}
 
 		return nil
 	}
@@ -36,6 +45,7 @@ func WithEmail(email string, primary bool) UserTraitOption {
 		return nil
 	}
 }
+
 func WithUserLogin(login string, aliases ...string) UserTraitOption {
 	return func(ut *v2.UserTrait) error {
 		if login == "" {
@@ -44,6 +54,13 @@ func WithUserLogin(login string, aliases ...string) UserTraitOption {
 		}
 		ut.Login = login
 		ut.LoginAliases = aliases
+		return nil
+	}
+}
+
+func WithEmployeeID(employeeIDs ...string) UserTraitOption {
+	return func(ut *v2.UserTrait) error {
+		ut.EmployeeIds = employeeIDs
 		return nil
 	}
 }
@@ -100,6 +117,13 @@ func WithMFAStatus(mfaStatus *v2.UserTrait_MFAStatus) UserTraitOption {
 func WithSSOStatus(ssoStatus *v2.UserTrait_SSOStatus) UserTraitOption {
 	return func(ut *v2.UserTrait) error {
 		ut.SsoStatus = ssoStatus
+		return nil
+	}
+}
+
+func WithStructuredName(structuredName *v2.UserTrait_StructuredName) UserTraitOption {
+	return func(ut *v2.UserTrait) error {
+		ut.StructuredName = structuredName
 		return nil
 	}
 }

@@ -73,6 +73,31 @@ func (tb *Tableau) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) 
 	return &v2.ConnectorMetadata{
 		DisplayName: "Tableau",
 		Description: "Connector syncing users, groups and sites from Tableau to Baton.",
+		AccountCreationSchema: &v2.ConnectorAccountCreationSchema{
+			FieldMap: map[string]*v2.ConnectorAccountCreationSchema_Field{
+				"email": {
+					DisplayName: "Email",
+					Required:    false,
+					Description: "The email address of the user. Tableau cloud only",
+					Field: &v2.ConnectorAccountCreationSchema_Field_StringField{
+						StringField: &v2.ConnectorAccountCreationSchema_StringField{},
+					},
+					Placeholder: "Email",
+					Order:       1,
+				},
+				"siteRole": {
+					DisplayName: "Site Role",
+					Required:    true,
+					Description: `The role to assign to the user on the site. Possible values are: 
+					Creator, Explorer, ExplorerCanPublish, SiteAdministratorExplorer, SiteAdministratorCreator, Unlicensed, or Viewer.`,
+					Field: &v2.ConnectorAccountCreationSchema_Field_StringField{
+						StringField: &v2.ConnectorAccountCreationSchema_StringField{},
+					},
+					Placeholder: "Site Role",
+					Order:       2,
+				},
+			},
+		},
 	}, nil
 }
 
