@@ -426,3 +426,26 @@ func (c *Client) RemoveUserFromSite(ctx context.Context, userId string) error {
 
 	return nil
 }
+
+func (c *Client) UpdateUserSiteRole(ctx context.Context, userId string, siteRole string) error {
+	url := fmt.Sprint(c.baseUrl, "/sites/", c.siteId, "/users/", userId)
+	var res struct {
+		User User `json:"user"`
+	}
+
+	requestBody, err := json.Marshal(map[string]interface{}{
+		"user": map[string]interface{}{
+			"siteRole": siteRole,
+		},
+	})
+
+	if err != nil {
+		return err
+	}
+
+	if err := c.doRequest(ctx, url, &res, nil, requestBody, http.MethodPut); err != nil {
+		return err
+	}
+
+	return nil
+}
