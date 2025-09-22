@@ -123,6 +123,43 @@ func (o *siteResourceType) Grants(ctx context.Context, resource *v2.Resource, pt
 	return rv, "", nil, nil
 }
 
+func (o *siteResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
+	roleName := entitlement.Slug
+	principalID := principal.Id.Resource
+
+	var apiRoleName string
+	for key, value := range roles {
+		if value == roleName {
+			apiRoleName = key
+			break
+		}
+	}
+
+	if apiRoleName == "" {
+		return nil, fmt.Errorf("unknown role: %s", roleName)
+	}
+
+	outputAnnotations := annotations.New()
+	err := o.client.UpdateUserSiteRole(ctx, principalID, apiRoleName)
+	if err != nil {
+		return outputAnnotations, fmt.Errorf("failed to grant %s role to user %s: %w", roleName, principalID, err)
+	}
+
+	return outputAnnotations, nil
+}
+
+func (o *siteResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
+	principalID := grant.Principal.Id.Resource
+
+	outputAnnotations := annotations.New()
+	err := o.client.UpdateUserSiteRole(ctx, principalID, unlicensed)
+	if err != nil {
+		return outputAnnotations, fmt.Errorf("failed to revoke site role from user %s: %w", principalID, err)
+	}
+
+	return outputAnnotations, nil
+}
+
 func siteBuilder(client *tableau.Client) *siteResourceType {
 	return &siteResourceType{
 		resourceType: resourceTypeSite,
