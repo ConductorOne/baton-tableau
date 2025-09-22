@@ -13,6 +13,8 @@ import (
 	"github.com/conductorone/baton-tableau/pkg/tableau"
 )
 
+var _ connectorbuilder.AccountManager = &userResourceType{}
+
 type userResourceType struct {
 	resourceType *v2.ResourceType
 	client       *tableau.Client
@@ -103,7 +105,7 @@ func (u *userResourceType) CreateAccountCapabilityDetails(ctx context.Context) (
 	}, nil, nil
 }
 
-func (o *userResourceType) CreateAccount(ctx context.Context, accountInfo *v2.AccountInfo, credentialOptions *v2.CredentialOptions) (
+func (o *userResourceType) CreateAccount(ctx context.Context, accountInfo *v2.AccountInfo, credentialOptions *v2.LocalCredentialOptions) (
 	connectorbuilder.CreateAccountResponse,
 	[]*v2.PlaintextData,
 	annotations.Annotations,
