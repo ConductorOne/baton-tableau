@@ -17,6 +17,12 @@ import (
 )
 
 var licences = []string{creator, explorer, viewer, unlicensed}
+var licensesMap = map[string]string{
+	"creator":    creator,
+	"explorer":   explorer,
+	"viewer":     viewer,
+	"unlicensed": unlicensed,
+}
 var RolesPerLicense = map[string][]string{
 	creator:    {creator, siteAdministratorCreator},
 	explorer:   {explorer, siteAdministratorExplorer, explorerCanPublish, readOnly, siteAdministrator},
@@ -106,7 +112,10 @@ func (l *licenseResourceType) Grants(ctx context.Context, resource *v2.Resource,
 }
 
 func (l *licenseResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
-	licenseName := entitlement.Resource.Id.Resource
+	licenseName, ok := licensesMap[entitlement.Resource.Id.Resource]
+	if !ok {
+		return nil, fmt.Errorf("unknown license %s", entitlement.Resource.Id.Resource)
+	}
 	principalID := principal.Id.Resource
 
 	outputAnnotations := annotations.New()
