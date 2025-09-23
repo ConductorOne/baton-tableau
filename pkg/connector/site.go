@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
@@ -124,7 +125,10 @@ func (o *siteResourceType) Grants(ctx context.Context, resource *v2.Resource, pt
 }
 
 func (o *siteResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
-	roleName := entitlement.Slug
+	roleName, err := parseRoleFromEntitlementID(entitlement.Id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse role from entitlement ID: %w", err)
+	}
 	principalID := principal.Id.Resource
 
 	var apiRoleName string
@@ -139,25 +143,23 @@ func (o *siteResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 		return nil, fmt.Errorf("unknown role: %s", roleName)
 	}
 
-	outputAnnotations := annotations.New()
-	err := o.client.UpdateUserSiteRole(ctx, principalID, apiRoleName)
+	err = o.client.UpdateUserSiteRole(ctx, principalID, apiRoleName)
 	if err != nil {
-		return outputAnnotations, fmt.Errorf("failed to grant %s role to user %s: %w", roleName, principalID, err)
+		return nil, fmt.Errorf("failed to grant %s role to user %s: %w", roleName, principalID, err)
 	}
 
-	return outputAnnotations, nil
+	return nil, nil
 }
 
 func (o *siteResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
 	principalID := grant.Principal.Id.Resource
 
-	outputAnnotations := annotations.New()
 	err := o.client.UpdateUserSiteRole(ctx, principalID, unlicensed)
 	if err != nil {
-		return outputAnnotations, fmt.Errorf("failed to revoke site role from user %s: %w", principalID, err)
+		return nil, fmt.Errorf("failed to revoke site role from user %s: %w", principalID, err)
 	}
 
-	return outputAnnotations, nil
+	return nil, nil
 }
 
 func siteBuilder(client *tableau.Client) *siteResourceType {
@@ -165,4 +167,12 @@ func siteBuilder(client *tableau.Client) *siteResourceType {
 		resourceType: resourceTypeSite,
 		client:       client,
 	}
+}
+
+func parseRoleFromEntitlementID(entitlementID string) (string, error) {
+	parts := strings.Split(entitlementID, ":")
+	if len(parts) != 3 {
+		return "", fmt.Errorf("invalid entitlement ID: %s", entitlementID)
+	}
+	return parts[2], nil
 }
