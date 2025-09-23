@@ -428,7 +428,10 @@ func (c *Client) RemoveUserFromSite(ctx context.Context, userId string) error {
 }
 
 func (c *Client) UpdateUserSiteRole(ctx context.Context, userId string, siteRole string) error {
-	url := fmt.Sprint(c.baseUrl, "/sites/", c.siteId, "/users/", userId)
+	url, err := buildResourceURL(c.baseUrl, "/sites/"+c.siteId+"/users", userId)
+	if err != nil {
+		return err
+	}
 	var res struct {
 		User User `json:"user"`
 	}
@@ -448,4 +451,12 @@ func (c *Client) UpdateUserSiteRole(ctx context.Context, userId string, siteRole
 	}
 
 	return nil
+}
+
+func buildResourceURL(baseURL string, endpoint string, elems ...string) (string, error) {
+	joined, err := url.JoinPath(baseURL, append([]string{endpoint}, elems...)...)
+	if err != nil {
+		return "", fmt.Errorf("invalid URL: %w", err)
+	}
+	return joined, nil
 }
