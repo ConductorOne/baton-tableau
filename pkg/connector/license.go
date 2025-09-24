@@ -17,9 +17,15 @@ import (
 )
 
 var licences = []string{creator, explorer, viewer, unlicensed}
+var licensesMap = map[string]string{
+	"creator":    creator,
+	"explorer":   explorer,
+	"viewer":     viewer,
+	"unlicensed": unlicensed,
+}
 var RolesPerLicense = map[string][]string{
-	creator:    {siteAdministratorCreator, creator},
-	explorer:   {siteAdministratorExplorer, explorerCanPublish, explorer, readOnly, siteAdministrator},
+	creator:    {creator, siteAdministratorCreator},
+	explorer:   {explorer, siteAdministratorExplorer, explorerCanPublish, readOnly, siteAdministrator},
 	viewer:     {viewer},
 	unlicensed: {unlicensed},
 }
@@ -103,6 +109,34 @@ func (l *licenseResourceType) Grants(ctx context.Context, resource *v2.Resource,
 	}
 
 	return rv, token, nil, nil
+}
+
+func (l *licenseResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
+	licenseName, ok := licensesMap[entitlement.Resource.Id.Resource]
+	if !ok {
+		return nil, fmt.Errorf("unknown license %s", entitlement.Resource.Id.Resource)
+	}
+	principalID := principal.Id.Resource
+
+	outputAnnotations := annotations.New()
+	err := l.client.UpdateUserSiteRole(ctx, principalID, licenseName)
+	if err != nil {
+		return outputAnnotations, fmt.Errorf("failed to grant %s license to user %s: %w", licenseName, principalID, err)
+	}
+
+	return outputAnnotations, nil
+}
+
+func (l *licenseResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
+	principalID := grant.Principal.Id.Resource
+
+	outputAnnotations := annotations.New()
+	err := l.client.UpdateUserSiteRole(ctx, principalID, unlicensed)
+	if err != nil {
+		return outputAnnotations, fmt.Errorf("failed to revoke license from user %s: %w", principalID, err)
+	}
+
+	return outputAnnotations, nil
 }
 
 func licenseBuilder(client *tableau.Client) *licenseResourceType {

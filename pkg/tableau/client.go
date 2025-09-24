@@ -426,3 +426,37 @@ func (c *Client) RemoveUserFromSite(ctx context.Context, userId string) error {
 
 	return nil
 }
+
+func (c *Client) UpdateUserSiteRole(ctx context.Context, userId string, siteRole string) error {
+	url, err := buildResourceURL(c.baseUrl, "/sites/"+c.siteId+"/users", userId)
+	if err != nil {
+		return err
+	}
+	var res struct {
+		User User `json:"user"`
+	}
+
+	requestBody, err := json.Marshal(map[string]interface{}{
+		"user": map[string]interface{}{
+			"siteRole": siteRole,
+		},
+	})
+
+	if err != nil {
+		return err
+	}
+
+	if err := c.doRequest(ctx, url, &res, nil, requestBody, http.MethodPut); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func buildResourceURL(baseURL string, endpoint string, elems ...string) (string, error) {
+	joined, err := url.JoinPath(baseURL, append([]string{endpoint}, elems...)...)
+	if err != nil {
+		return "", fmt.Errorf("invalid URL: %w", err)
+	}
+	return joined, nil
+}
