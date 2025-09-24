@@ -55,4 +55,6 @@ var Config = field.NewConfiguration(
 	ConfigurationFields,
 	field.WithConstraints(FieldRelationships...),
 	field.WithConnectorDisplayName("Tableau"),
+	field.WithHelpUrl("/docs/baton/tableau"),
+	field.WithIconUrl("/static/app-icons/tableau.svg"),
 )
