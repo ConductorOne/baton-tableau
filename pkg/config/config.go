@@ -7,12 +7,14 @@ import (
 var (
 	AccessTokenName = field.StringField(
 		"access-token-name",
+		field.WithRequired(true),
 		field.WithDisplayName("Access Token Name"),
 		field.WithDescription("Access token name used to connect to the Tableau API"),
 	)
 
 	AccessTokenSecret = field.StringField(
 		"access-token-secret",
+		field.WithRequired(true),
 		field.WithDisplayName("Access Token Secret"),
 		field.WithDescription("Access token secret used to connect to the Tableau API"),
 		field.WithIsSecret(true),
@@ -20,6 +22,7 @@ var (
 
 	ServerPath = field.StringField(
 		"server-path",
+		field.WithRequired(true),
 		field.WithDisplayName("Server Path"),
 		field.WithDescription("Base URL of your Tableau Server or Tableau Cloud instance"),
 	)
