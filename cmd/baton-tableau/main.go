@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	"github.com/conductorone/baton-sdk/pkg/field"
@@ -48,12 +49,13 @@ func getConnector(ctx context.Context, tc *cfg.Tableau) (types.ConnectorServer, 
 		return nil, err
 	}
 
-	apiVersion := tc.ApiVersion
-	if apiVersion == "" {
-		apiVersion = "3.17"
+	apiVersion := "3.19"
+	if tc.ApiVersion != "" {
+		apiVersion = tc.ApiVersion
 	}
-
 	serverPath := tc.ServerPath
+	serverPath = strings.TrimPrefix(serverPath, "https://")
+	serverPath = strings.TrimPrefix(serverPath, "http://")
 	baseUrl, err := url.JoinPath("https://", serverPath, "api", apiVersion)
 	if err != nil {
 		l.Error("error creating base url", zap.Error(err))
