@@ -415,6 +415,10 @@ func (c *Client) AddUserToSite(ctx context.Context, user CreateUserRequest) (*Us
 		return nil, err
 	}
 
+	if res.User == nil {
+		return nil, fmt.Errorf("failed to create user, no user returned")
+	}
+
 	return res.User, nil
 }
 
