@@ -97,7 +97,7 @@ func (l *licenseResourceType) Grants(ctx context.Context, resource *v2.Resource,
 	var rv []*v2.Grant
 	for _, user := range users {
 		userCopy := user
-		ur, err := userResource(ctx, &userCopy, resource.Id)
+		ur, err := userResource(&userCopy, resource.Id)
 		if err != nil {
 			return nil, "", nil, err
 		}

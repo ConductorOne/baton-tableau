@@ -394,10 +394,10 @@ func (c *Client) doRequest(ctx context.Context, url string, res interface{}, q u
 	return nil
 }
 
-func (c *Client) AddUserToSite(ctx context.Context, user CreateUserRequest) error {
+func (c *Client) AddUserToSite(ctx context.Context, user CreateUserRequest) (*User, error) {
 	url := fmt.Sprint(c.baseUrl, "/sites/", c.siteId, "/users")
 	var res struct {
-		User User `json:"user"`
+		User *User `json:"user"`
 	}
 
 	requestBody, err := json.Marshal(map[string]interface{}{
@@ -408,14 +408,14 @@ func (c *Client) AddUserToSite(ctx context.Context, user CreateUserRequest) erro
 	})
 
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if err := c.doRequest(ctx, url, &res, nil, requestBody, http.MethodPost); err != nil {
-		return err
+		return nil, err
 	}
 
-	return nil
+	return res.User, nil
 }
 
 func (c *Client) RemoveUserFromSite(ctx context.Context, userId string) error {

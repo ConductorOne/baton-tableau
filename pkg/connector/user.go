@@ -25,7 +25,7 @@ func (o *userResourceType) ResourceType(_ context.Context) *v2.ResourceType {
 }
 
 // Create a new connector resource for a Tableau user.
-func userResource(ctx context.Context, user *tableau.User, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
+func userResource(user *tableau.User, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
 	names := strings.SplitN(user.FullName, " ", 2)
 	var firstName, lastName string
 	switch len(names) {
@@ -77,7 +77,7 @@ func (o *userResourceType) List(ctx context.Context, parentId *v2.ResourceId, to
 	var rv []*v2.Resource
 	for _, user := range users {
 		userCopy := user
-		ur, err := userResource(ctx, &userCopy, parentId)
+		ur, err := userResource(&userCopy, parentId)
 		if err != nil {
 			return nil, "", nil, err
 		}
@@ -99,7 +99,6 @@ func (u *userResourceType) CreateAccountCapabilityDetails(ctx context.Context) (
 	return &v2.CredentialDetailsAccountProvisioning{
 		SupportedCredentialOptions: []v2.CapabilityDetailCredentialOption{
 			v2.CapabilityDetailCredentialOption_CAPABILITY_DETAIL_CREDENTIAL_OPTION_NO_PASSWORD,
-			v2.CapabilityDetailCredentialOption_CAPABILITY_DETAIL_CREDENTIAL_OPTION_RANDOM_PASSWORD,
 		},
 		PreferredCredentialOption: v2.CapabilityDetailCredentialOption_CAPABILITY_DETAIL_CREDENTIAL_OPTION_NO_PASSWORD,
 	}, nil, nil
@@ -122,7 +121,7 @@ func (o *userResourceType) CreateAccount(ctx context.Context, accountInfo *v2.Ac
 		return nil, nil, nil, fmt.Errorf("baton-tableau: siteRole not found in profile")
 	}
 
-	err := o.client.AddUserToSite(ctx, tableau.CreateUserRequest{
+	user, err := o.client.AddUserToSite(ctx, tableau.CreateUserRequest{
 		Email:    email,
 		SiteRole: siteRole,
 	})
@@ -130,9 +129,13 @@ func (o *userResourceType) CreateAccount(ctx context.Context, accountInfo *v2.Ac
 		return nil, nil, nil, fmt.Errorf("baton-tableau: failed to create user %s: %w", email, err)
 	}
 
-	return &v2.CreateAccountResponse_ActionRequiredResult{
-		Message:               fmt.Sprintf("User %s invitation sent successfully", email),
-		IsCreateAccountResult: true,
+	resource, err := userResource(user, nil)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("baton-tableau: failed to parse user resource for %s: %w", email, err)
+	}
+
+	return &v2.CreateAccountResponse_SuccessResult{
+		Resource: resource,
 	}, nil, nil, nil
 }
 
