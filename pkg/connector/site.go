@@ -113,7 +113,7 @@ func (o *siteResourceType) Grants(ctx context.Context, resource *v2.Resource, pt
 			)
 		}
 		userCopy := user
-		ur, err := userResource(ctx, &userCopy, resource.Id)
+		ur, err := userResource(&userCopy, resource.Id)
 		if err != nil {
 			return nil, "", nil, err
 		}
