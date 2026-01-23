@@ -400,11 +400,19 @@ func (c *Client) AddUserToSite(ctx context.Context, user CreateUserRequest) (*Us
 		User *User `json:"user"`
 	}
 
+	userMap := map[string]interface{}{
+		"name":     user.Email,
+		"siteRole": user.SiteRole,
+	}
+
+	if user.IdpConfigurationId != "" {
+		userMap["idpConfigurationId"] = user.IdpConfigurationId
+	} else if user.AuthSetting != "" {
+		userMap["authSetting"] = user.AuthSetting
+	}
+
 	requestBody, err := json.Marshal(map[string]interface{}{
-		"user": map[string]interface{}{
-			"name":     user.Email,
-			"siteRole": user.SiteRole,
-		},
+		"user": userMap,
 	})
 
 	if err != nil {
@@ -455,6 +463,21 @@ func (c *Client) UpdateUserSiteRole(ctx context.Context, userId string, siteRole
 	}
 
 	return nil
+}
+
+func (c *Client) ListIdpConfigurations(ctx context.Context) ([]IdpConfiguration, error) {
+	url := fmt.Sprint(c.baseUrl, "/sites/", c.siteId, "/site-auth-configurations")
+	var res struct {
+		SiteAuthConfigurations struct {
+			SiteAuthConfiguration []IdpConfiguration `json:"siteAuthConfiguration"`
+		} `json:"siteAuthConfigurations"`
+	}
+
+	if err := c.doRequest(ctx, url, &res, nil, nil, http.MethodGet); err != nil {
+		return nil, err
+	}
+
+	return res.SiteAuthConfigurations.SiteAuthConfiguration, nil
 }
 
 func buildResourceURL(baseURL string, endpoint string, elems ...string) (string, error) {
