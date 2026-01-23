@@ -2,6 +2,7 @@ package connector
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -222,12 +223,12 @@ func findIDPByName(configs []tableau.IdpConfiguration, name string) (*tableau.Id
 }
 
 func buildMultipleIDPError(configs []tableau.IdpConfiguration) error {
-	var builder strings.Builder
-	builder.WriteString(fmt.Sprintf("baton-tableau: multiple SAML IDP configurations found (%d available). Please specify idpConfigurationName in the account profile. Available IDPs:\n", len(configs)))
+	msg := fmt.Sprintf(`baton-tableau: multiple SAML IDP configurations found (%d available). Please specify idpConfigurationName in the account profile. Available IDPs:
+`, len(configs))
 
 	for _, config := range configs {
-		builder.WriteString(fmt.Sprintf("  - \"%s\" (ID: %s)\n", config.IdpConfigurationName, config.IdpConfigurationId))
+		msg += fmt.Sprintf("  - \"%s\" (ID: %s)\n", config.IdpConfigurationName, config.IdpConfigurationId)
 	}
 
-	return fmt.Errorf(builder.String())
+	return errors.New(msg)
 }

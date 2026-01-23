@@ -108,7 +108,10 @@ func (tb *Tableau) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) 
 				"idpConfigurationName": {
 					DisplayName: "IDP Configuration Name",
 					Required:    false,
-					Description: "The name of the SAML IDP configuration to use for user authentication. Only required when multiple SAML IDP configurations are enabled on the site. If only one SAML IDP exists, it will be used automatically. If no SAML IDPs exist, set withMFA=true instead.",
+					Description: `The name of the SAML IDP configuration to use for user authentication. 
+						Only required when multiple SAML IDP configurations are enabled on the site.
+						If only one SAML IDP exists, it will be used automatically. 
+						If no SAML IDPs exist, set withMFA=true instead.`,
 					Field: &v2.ConnectorAccountCreationSchema_Field_StringField{
 						StringField: &v2.ConnectorAccountCreationSchema_StringField{},
 					},
