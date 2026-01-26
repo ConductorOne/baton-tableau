@@ -125,27 +125,28 @@ func (o *userResourceType) CreateAccount(ctx context.Context, accountInfo *v2.Ac
 		return nil, nil, nil, fmt.Errorf("baton-tableau: siteRole not found in profile")
 	}
 
+	var idpID string
+	var err error
+	// Tableau API defaults to MFA authentication when IdpConfigurationId is empty.
+	// withMFA=true: Leave IdpConfigurationId empty to use Tableau's MFA default.
+	// withMFA=false: Select a SAML IDP configuration from the available IDPs.
 	withMFA, _ := pMap["withMFA"].(bool)
-
-	var authSetting string
-	var idpConfigId string
-
-	if withMFA {
-		authSetting = "TableauIDWithMFA"
-	} else {
-		id, err := o.selectIDPConfiguration(ctx, pMap)
+	if !withMFA {
+		idpID, err = o.selectIDPConfiguration(ctx, pMap)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, fmt.Errorf("baton-tableau: failed to select IDP configuration: %w", err)
 		}
-		idpConfigId = id
 	}
 
-	user, err := o.client.AddUserToSite(ctx, tableau.CreateUserRequest{
-		Email:              email,
-		SiteRole:           siteRole,
-		AuthSetting:        authSetting,
-		IdpConfigurationId: idpConfigId,
-	})
+	reqBody := tableau.CreateUserRequest{
+		Email:    email,
+		SiteRole: siteRole,
+	}
+	if idpID != "" {
+		reqBody.IdpConfigurationId = idpID
+	}
+
+	user, err := o.client.AddUserToSite(ctx, reqBody)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("baton-tableau: failed to create user %s: %w", email, err)
 	}
