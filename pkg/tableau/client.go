@@ -457,6 +457,163 @@ func (c *Client) UpdateUserSiteRole(ctx context.Context, userId string, siteRole
 	return nil
 }
 
+func (c *Client) GetViews(ctx context.Context, pageSize int, pageNumber int) ([]View, Pagination, error) {
+	url := fmt.Sprint(c.baseUrl, "/sites/", c.siteId, "/views")
+	q := paginationQuery(pageSize, pageNumber)
+
+	var res struct {
+		Pagination Pagination `json:"pagination"`
+		Views      struct {
+			View []View `json:"view"`
+		} `json:"views"`
+	}
+
+	if err := c.doRequest(ctx, url, &res, q, nil, http.MethodGet); err != nil {
+		return nil, Pagination{}, err
+	}
+
+	return res.Views.View, res.Pagination, nil
+}
+
+func (c *Client) GetPaginatedViews(ctx context.Context) ([]View, error) {
+	var views []View
+	pageNumber := defaultPageNumber
+	totalReturned := 0
+
+	for {
+		allViews, paginationData, err := c.GetViews(ctx, defaultPageSize, pageNumber)
+		if err != nil {
+			return nil, fmt.Errorf("tableau-connector: failed to list views: %w", err)
+		}
+
+		pageSizeInt, err := strconv.Atoi(paginationData.PageSize)
+		if err != nil {
+			return nil, err
+		}
+
+		totalReturned += pageSizeInt
+		totalAvailableInt, err := strconv.Atoi(paginationData.TotalAvailable)
+		if err != nil {
+			return nil, err
+		}
+
+		views = append(views, allViews...)
+
+		if totalReturned >= totalAvailableInt {
+			break
+		}
+		pageNumber += 1
+	}
+
+	return views, nil
+}
+
+func (c *Client) GetViewPermissions(ctx context.Context, viewID string) ([]GranteeCapabilities, error) {
+	url := fmt.Sprint(c.baseUrl, "/sites/", c.siteId, "/views/", viewID, "/permissions")
+
+	var res struct {
+		Permissions struct {
+			GranteeCapabilities []GranteeCapabilities `json:"granteeCapabilities"`
+		} `json:"permissions"`
+	}
+
+	if err := c.doRequest(ctx, url, &res, nil, nil, http.MethodGet); err != nil {
+		return nil, err
+	}
+
+	return res.Permissions.GranteeCapabilities, nil
+}
+
+func (c *Client) AddViewPermission(ctx context.Context, viewID, userID, capabilityName, capabilityMode string) error {
+	url := fmt.Sprint(c.baseUrl, "/sites/", c.siteId, "/views/", viewID, "/permissions")
+
+	requestBody, err := json.Marshal(map[string]interface{}{
+		"permissions": map[string]interface{}{
+			"granteeCapabilities": []map[string]interface{}{
+				{
+					"user": map[string]interface{}{
+						"id": userID,
+					},
+					"capabilities": map[string]interface{}{
+						"capability": []map[string]interface{}{
+							{
+								"name": capabilityName,
+								"mode": capabilityMode,
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	if err != nil {
+		return err
+	}
+
+	var res struct{}
+	if err := c.doRequest(ctx, url, &res, nil, requestBody, http.MethodPut); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *Client) DeleteViewPermission(ctx context.Context, viewID, userID, capabilityName, capabilityMode string) error {
+	url := fmt.Sprint(c.baseUrl, "/sites/", c.siteId, "/views/", viewID, "/permissions/users/", userID, "/", capabilityName, "/", capabilityMode)
+
+	if err := c.doRequest(ctx, url, nil, nil, nil, http.MethodDelete); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *Client) AddViewGroupPermission(ctx context.Context, viewID, groupID, capabilityName, capabilityMode string) error {
+	url := fmt.Sprint(c.baseUrl, "/sites/", c.siteId, "/views/", viewID, "/permissions")
+
+	requestBody, err := json.Marshal(map[string]interface{}{
+		"permissions": map[string]interface{}{
+			"granteeCapabilities": []map[string]interface{}{
+				{
+					"group": map[string]interface{}{
+						"id": groupID,
+					},
+					"capabilities": map[string]interface{}{
+						"capability": []map[string]interface{}{
+							{
+								"name": capabilityName,
+								"mode": capabilityMode,
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	if err != nil {
+		return err
+	}
+
+	var res struct{}
+	if err := c.doRequest(ctx, url, &res, nil, requestBody, http.MethodPut); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *Client) DeleteViewGroupPermission(ctx context.Context, viewID, groupID, capabilityName, capabilityMode string) error {
+	url := fmt.Sprint(c.baseUrl, "/sites/", c.siteId, "/views/", viewID, "/permissions/groups/", groupID, "/", capabilityName, "/", capabilityMode)
+
+	if err := c.doRequest(ctx, url, nil, nil, nil, http.MethodDelete); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func buildResourceURL(baseURL string, endpoint string, elems ...string) (string, error) {
 	joined, err := url.JoinPath(baseURL, append([]string{endpoint}, elems...)...)
 	if err != nil {

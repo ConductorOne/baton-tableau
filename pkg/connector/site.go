@@ -58,6 +58,7 @@ func siteResource(site tableau.Site) (*v2.Resource, error) {
 		rs.WithAnnotation(
 			&v2.ChildResourceType{ResourceTypeId: resourceTypeUser.Id},
 			&v2.ChildResourceType{ResourceTypeId: resourceTypeGroup.Id},
+			&v2.ChildResourceType{ResourceTypeId: resourceTypeView.Id},
 		),
 	}
 	ret, err := rs.NewResource(site.Name, resourceTypeSite, site.ID, siteOptions...)

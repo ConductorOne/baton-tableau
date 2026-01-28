@@ -15,7 +15,10 @@ import (
 	"go.uber.org/zap"
 )
 
-const memberEntitlement = "member"
+const (
+	memberEntitlement       = "member"
+	siteRoleServerAdmin     = "ServerAdministrator"
+)
 
 type groupResourceType struct {
 	resourceType *v2.ResourceType
@@ -105,7 +108,18 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 		return nil, "", nil, err
 	}
 
+	l := ctxzap.Extract(ctx)
 	for _, user := range users {
+		if user.SiteRole == siteRoleServerAdmin {
+			l.Debug(
+				"baton-tableau: skipping server administrator in group membership (server-level admins are not site-scoped users)",
+				zap.String("group_id", groupId),
+				zap.String("user_id", user.ID),
+				zap.String("user_email", user.Email),
+			)
+			continue
+		}
+
 		userCopy := user
 		ur, err := userResource(&userCopy, resource.Id)
 		if err != nil {
