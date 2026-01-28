@@ -407,8 +407,6 @@ func (c *Client) AddUserToSite(ctx context.Context, user CreateUserRequest) (*Us
 
 	if user.IdpConfigurationId != "" {
 		userMap["idpConfigurationId"] = user.IdpConfigurationId
-	} else if user.AuthSetting != "" {
-		userMap["authSetting"] = user.AuthSetting
 	}
 
 	requestBody, err := json.Marshal(map[string]interface{}{
