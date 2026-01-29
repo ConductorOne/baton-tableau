@@ -11,6 +11,7 @@ import (
 
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"google.golang.org/grpc/codes"
 )
 
 const (
@@ -382,7 +383,12 @@ func (c *Client) doRequest(ctx context.Context, url string, res interface{}, q u
 
 	if resp.StatusCode >= 300 {
 		logBody(ctx, resp)
-		return fmt.Errorf("tableau-connector: request failed with status code %d", resp.StatusCode)
+		grpcCode := mapHTTPStatusToGRPCCode(resp.StatusCode)
+		return uhttp.WrapErrors(
+			grpcCode,
+			fmt.Sprintf("tableau-connector: request failed with status code %d", resp.StatusCode),
+			fmt.Errorf("HTTP %d", resp.StatusCode),
+		)
 	}
 
 	if method != http.MethodDelete {
@@ -392,6 +398,35 @@ func (c *Client) doRequest(ctx context.Context, url string, res interface{}, q u
 	}
 
 	return nil
+}
+
+func mapHTTPStatusToGRPCCode(statusCode int) codes.Code {
+	switch statusCode {
+	case http.StatusBadRequest:
+		return codes.InvalidArgument
+	case http.StatusUnauthorized:
+		return codes.Unauthenticated
+	case http.StatusForbidden:
+		return codes.PermissionDenied
+	case http.StatusNotFound:
+		return codes.NotFound
+	case http.StatusConflict:
+		return codes.AlreadyExists
+	case http.StatusRequestTimeout:
+		return codes.DeadlineExceeded
+	case http.StatusTooManyRequests:
+		return codes.Unavailable
+	case http.StatusInternalServerError:
+		return codes.Internal
+	case http.StatusNotImplemented:
+		return codes.Unimplemented
+	case http.StatusServiceUnavailable:
+		return codes.Unavailable
+	case http.StatusGatewayTimeout:
+		return codes.DeadlineExceeded
+	default:
+		return codes.Unknown
+	}
 }
 
 func (c *Client) AddUserToSite(ctx context.Context, user CreateUserRequest) (*User, error) {
