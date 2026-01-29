@@ -464,7 +464,10 @@ func (c *Client) UpdateUserSiteRole(ctx context.Context, userId string, siteRole
 }
 
 func (c *Client) GetViews(ctx context.Context, pageSize int, pageNumber int) ([]View, Pagination, error) {
-	url := fmt.Sprint(c.baseUrl, "/sites/", c.siteId, "/views")
+	endpoint, err := url.JoinPath(c.baseUrl, "sites", c.siteId, "views")
+	if err != nil {
+		return nil, Pagination{}, fmt.Errorf("failed to build URL: %w", err)
+	}
 	q := paginationQuery(pageSize, pageNumber)
 
 	var res struct {
@@ -474,7 +477,7 @@ func (c *Client) GetViews(ctx context.Context, pageSize int, pageNumber int) ([]
 		} `json:"views"`
 	}
 
-	if err := c.doRequest(ctx, url, &res, q, nil, http.MethodGet); err != nil {
+	if err := c.doRequest(ctx, endpoint, &res, q, nil, http.MethodGet); err != nil {
 		return nil, Pagination{}, err
 	}
 
@@ -515,7 +518,10 @@ func (c *Client) GetPaginatedViews(ctx context.Context) ([]View, error) {
 }
 
 func (c *Client) GetViewPermissions(ctx context.Context, viewID string) ([]GranteeCapabilities, error) {
-	url := fmt.Sprint(c.baseUrl, "/sites/", c.siteId, "/views/", viewID, "/permissions")
+	endpoint, err := url.JoinPath(c.baseUrl, "sites", c.siteId, "views", viewID, "permissions")
+	if err != nil {
+		return nil, fmt.Errorf("failed to build URL: %w", err)
+	}
 
 	var res struct {
 		Permissions struct {
@@ -523,7 +529,7 @@ func (c *Client) GetViewPermissions(ctx context.Context, viewID string) ([]Grant
 		} `json:"permissions"`
 	}
 
-	if err := c.doRequest(ctx, url, &res, nil, nil, http.MethodGet); err != nil {
+	if err := c.doRequest(ctx, endpoint, &res, nil, nil, http.MethodGet); err != nil {
 		return nil, err
 	}
 
@@ -531,7 +537,10 @@ func (c *Client) GetViewPermissions(ctx context.Context, viewID string) ([]Grant
 }
 
 func (c *Client) AddViewPermission(ctx context.Context, viewID, userID, capabilityName, capabilityMode string) error {
-	url := fmt.Sprint(c.baseUrl, "/sites/", c.siteId, "/views/", viewID, "/permissions")
+	endpoint, err := url.JoinPath(c.baseUrl, "sites", c.siteId, "views", viewID, "permissions")
+	if err != nil {
+		return fmt.Errorf("failed to build URL: %w", err)
+	}
 
 	requestBody, err := json.Marshal(map[string]interface{}{
 		"permissions": map[string]interface{}{
@@ -558,7 +567,7 @@ func (c *Client) AddViewPermission(ctx context.Context, viewID, userID, capabili
 	}
 
 	var res struct{}
-	if err := c.doRequest(ctx, url, &res, nil, requestBody, http.MethodPut); err != nil {
+	if err := c.doRequest(ctx, endpoint, &res, nil, requestBody, http.MethodPut); err != nil {
 		return err
 	}
 
@@ -566,9 +575,12 @@ func (c *Client) AddViewPermission(ctx context.Context, viewID, userID, capabili
 }
 
 func (c *Client) DeleteViewPermission(ctx context.Context, viewID, userID, capabilityName, capabilityMode string) error {
-	url := fmt.Sprint(c.baseUrl, "/sites/", c.siteId, "/views/", viewID, "/permissions/users/", userID, "/", capabilityName, "/", capabilityMode)
+	endpoint, err := url.JoinPath(c.baseUrl, "sites", c.siteId, "views", viewID, "permissions", "users", userID, capabilityName, capabilityMode)
+	if err != nil {
+		return fmt.Errorf("failed to build URL: %w", err)
+	}
 
-	if err := c.doRequest(ctx, url, nil, nil, nil, http.MethodDelete); err != nil {
+	if err := c.doRequest(ctx, endpoint, nil, nil, nil, http.MethodDelete); err != nil {
 		return err
 	}
 
@@ -576,7 +588,10 @@ func (c *Client) DeleteViewPermission(ctx context.Context, viewID, userID, capab
 }
 
 func (c *Client) AddViewGroupPermission(ctx context.Context, viewID, groupID, capabilityName, capabilityMode string) error {
-	url := fmt.Sprint(c.baseUrl, "/sites/", c.siteId, "/views/", viewID, "/permissions")
+	endpoint, err := url.JoinPath(c.baseUrl, "sites", c.siteId, "views", viewID, "permissions")
+	if err != nil {
+		return fmt.Errorf("failed to build URL: %w", err)
+	}
 
 	requestBody, err := json.Marshal(map[string]interface{}{
 		"permissions": map[string]interface{}{
@@ -603,7 +618,7 @@ func (c *Client) AddViewGroupPermission(ctx context.Context, viewID, groupID, ca
 	}
 
 	var res struct{}
-	if err := c.doRequest(ctx, url, &res, nil, requestBody, http.MethodPut); err != nil {
+	if err := c.doRequest(ctx, endpoint, &res, nil, requestBody, http.MethodPut); err != nil {
 		return err
 	}
 
@@ -611,9 +626,12 @@ func (c *Client) AddViewGroupPermission(ctx context.Context, viewID, groupID, ca
 }
 
 func (c *Client) DeleteViewGroupPermission(ctx context.Context, viewID, groupID, capabilityName, capabilityMode string) error {
-	url := fmt.Sprint(c.baseUrl, "/sites/", c.siteId, "/views/", viewID, "/permissions/groups/", groupID, "/", capabilityName, "/", capabilityMode)
+	endpoint, err := url.JoinPath(c.baseUrl, "sites", c.siteId, "views", viewID, "permissions", "groups", groupID, capabilityName, capabilityMode)
+	if err != nil {
+		return fmt.Errorf("failed to build URL: %w", err)
+	}
 
-	if err := c.doRequest(ctx, url, nil, nil, nil, http.MethodDelete); err != nil {
+	if err := c.doRequest(ctx, endpoint, nil, nil, nil, http.MethodDelete); err != nil {
 		return err
 	}
 

@@ -111,7 +111,7 @@ func (v *viewResourceType) Grants(ctx context.Context, resource *v2.Resource, to
 
 	permissions, err := v.client.GetViewPermissions(ctx, viewID)
 	if err != nil {
-		l.Warn(
+		l.Debug(
 			"baton-tableau: failed to get view permissions, skipping grants for this view",
 			zap.String("view_id", viewID),
 			zap.String("view_name", resource.DisplayName),
