@@ -93,13 +93,35 @@ func (tb *Tableau) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) 
 				"siteRole": {
 					DisplayName: "Site Role",
 					Required:    true,
-					Description: `The role to assign to the user on the site. Possible values are: 
+					Description: `The role to assign to the user on the site. Possible values are:
 					Creator, Explorer, ExplorerCanPublish, SiteAdministratorExplorer, SiteAdministratorCreator, Unlicensed, or Viewer.`,
 					Field: &v2.ConnectorAccountCreationSchema_Field_StringField{
 						StringField: &v2.ConnectorAccountCreationSchema_StringField{},
 					},
 					Placeholder: "Site Role",
 					Order:       2,
+				},
+				"withMFA": {
+					DisplayName: "With MFA",
+					Required:    false,
+					Description: `If true, creates users with TableauIDWithMFA authentication instead of using the site's IDP configuration (SAML). Defaults to false.`,
+					Field: &v2.ConnectorAccountCreationSchema_Field_BoolField{
+						BoolField: &v2.ConnectorAccountCreationSchema_BoolField{},
+					},
+					Order: 3,
+				},
+				"idpConfigurationName": {
+					DisplayName: "IDP Configuration Name",
+					Required:    false,
+					Description: `The name of the SAML IDP configuration to use for user authentication. 
+						Only required when multiple SAML IDP configurations are enabled on the site.
+						If only one SAML IDP exists, it will be used automatically. 
+						If no SAML IDPs exist, set withMFA=true instead.`,
+					Field: &v2.ConnectorAccountCreationSchema_Field_StringField{
+						StringField: &v2.ConnectorAccountCreationSchema_StringField{},
+					},
+					Placeholder: "IDP Configuration Name",
+					Order:       4,
 				},
 			},
 		},

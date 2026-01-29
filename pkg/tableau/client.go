@@ -400,11 +400,17 @@ func (c *Client) AddUserToSite(ctx context.Context, user CreateUserRequest) (*Us
 		User *User `json:"user"`
 	}
 
+	userMap := map[string]interface{}{
+		"name":     user.Email,
+		"siteRole": user.SiteRole,
+	}
+
+	if user.IdpConfigurationId != "" {
+		userMap["idpConfigurationId"] = user.IdpConfigurationId
+	}
+
 	requestBody, err := json.Marshal(map[string]interface{}{
-		"user": map[string]interface{}{
-			"name":     user.Email,
-			"siteRole": user.SiteRole,
-		},
+		"user": userMap,
 	})
 
 	if err != nil {
@@ -614,6 +620,24 @@ func (c *Client) DeleteViewGroupPermission(ctx context.Context, viewID, groupID,
 	return nil
 }
 
+func (c *Client) ListIdpConfigurations(ctx context.Context) ([]IdpConfiguration, error) {
+	endpoint, err := url.JoinPath(c.baseUrl, "sites", c.siteId, "site-auth-configurations")
+	if err != nil {
+		return nil, fmt.Errorf("failed to build URL: %w", err)
+	}
+
+	var res struct {
+		SiteAuthConfigurations struct {
+			SiteAuthConfiguration []IdpConfiguration `json:"siteAuthConfiguration"`
+		} `json:"siteAuthConfigurations"`
+	}
+
+	if err := c.doRequest(ctx, endpoint, &res, nil, nil, http.MethodGet); err != nil {
+		return nil, err
+	}
+
+	return res.SiteAuthConfigurations.SiteAuthConfiguration, nil
+}
 func buildResourceURL(baseURL string, endpoint string, elems ...string) (string, error) {
 	joined, err := url.JoinPath(baseURL, append([]string{endpoint}, elems...)...)
 	if err != nil {

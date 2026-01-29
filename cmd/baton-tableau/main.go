@@ -49,7 +49,7 @@ func getConnector(ctx context.Context, tc *cfg.Tableau) (types.ConnectorServer, 
 		return nil, err
 	}
 
-	apiVersion := "3.19"
+	apiVersion := "3.27"
 	if tc.ApiVersion != "" {
 		apiVersion = tc.ApiVersion
 	}
