@@ -132,7 +132,8 @@ func (o *userResourceType) CreateAccount(ctx context.Context, accountInfo *v2.Ac
 	// withMFA=false: Select a SAML IDP configuration from the available IDPs.
 	withMFA, _ := pMap["withMFA"].(bool)
 	if !withMFA {
-		idpID, err = o.selectIDPConfiguration(ctx, pMap)
+		idpConfigName, _ := pMap["idpConfigurationName"].(string)
+		idpID, err = o.selectIDPConfiguration(ctx, idpConfigName)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("baton-tableau: failed to select IDP configuration: %w", err)
 		}
@@ -161,9 +162,7 @@ func (o *userResourceType) CreateAccount(ctx context.Context, accountInfo *v2.Ac
 	}, nil, nil, nil
 }
 
-func (o *userResourceType) selectIDPConfiguration(ctx context.Context, pMap map[string]interface{}) (string, error) {
-	idpConfigName, _ := pMap["idpConfigurationName"].(string)
-
+func (o *userResourceType) selectIDPConfiguration(ctx context.Context, idpConfigName string) (string, error) {
 	idpConfigs, err := o.client.ListIdpConfigurations(ctx)
 	if err != nil {
 		return "", fmt.Errorf("baton-tableau: failed to list IDP configurations: %w", err)
@@ -180,20 +179,19 @@ func (o *userResourceType) selectIDPConfiguration(ctx context.Context, pMap map[
 		return "", fmt.Errorf("baton-tableau: you need to pass the MFA flag since no IDP is configured in Tableau")
 	}
 
+	if idpConfigName != "" {
+		selectedConfig, err := findIDPByName(enabledSAMLConfigs, idpConfigName)
+		if err != nil {
+			return "", uhttp.WrapErrors(codes.InvalidArgument, fmt.Sprintf("IDP configuration '%s' not found", idpConfigName), buildMultipleIDPError(enabledSAMLConfigs))
+		}
+		return selectedConfig.IdpConfigurationId, nil
+	}
+
 	if len(enabledSAMLConfigs) == 1 {
 		return enabledSAMLConfigs[0].IdpConfigurationId, nil
 	}
 
-	if idpConfigName == "" {
-		return "", uhttp.WrapErrors(codes.InvalidArgument, "multiple SAML IDPs available", buildMultipleIDPError(enabledSAMLConfigs))
-	}
-
-	selectedConfig, err := findIDPByName(enabledSAMLConfigs, idpConfigName)
-	if err != nil {
-		return "", uhttp.WrapErrors(codes.InvalidArgument, fmt.Sprintf("IDP configuration '%s' not found", idpConfigName), buildMultipleIDPError(enabledSAMLConfigs))
-	}
-
-	return selectedConfig.IdpConfigurationId, nil
+	return "", uhttp.WrapErrors(codes.InvalidArgument, "multiple SAML IDPs available", buildMultipleIDPError(enabledSAMLConfigs))
 }
 
 func (o *userResourceType) Delete(ctx context.Context, resourceId *v2.ResourceId) (annotations.Annotations, error) {

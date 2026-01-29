@@ -464,14 +464,18 @@ func (c *Client) UpdateUserSiteRole(ctx context.Context, userId string, siteRole
 }
 
 func (c *Client) ListIdpConfigurations(ctx context.Context) ([]IdpConfiguration, error) {
-	url := fmt.Sprint(c.baseUrl, "/sites/", c.siteId, "/site-auth-configurations")
+	endpoint, err := url.JoinPath(c.baseUrl, "sites", c.siteId, "site-auth-configurations")
+	if err != nil {
+		return nil, fmt.Errorf("failed to build URL: %w", err)
+	}
+
 	var res struct {
 		SiteAuthConfigurations struct {
 			SiteAuthConfiguration []IdpConfiguration `json:"siteAuthConfiguration"`
 		} `json:"siteAuthConfigurations"`
 	}
 
-	if err := c.doRequest(ctx, url, &res, nil, nil, http.MethodGet); err != nil {
+	if err := c.doRequest(ctx, endpoint, &res, nil, nil, http.MethodGet); err != nil {
 		return nil, err
 	}
 
