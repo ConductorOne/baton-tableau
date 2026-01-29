@@ -43,6 +43,7 @@ baton resources
 - Users
 - Groups
 - Licenses
+- Views (Dashboards)
 
 # Contributing, Support and Issues
 
