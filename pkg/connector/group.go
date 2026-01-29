@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	memberEntitlement       = "member"
-	siteRoleServerAdmin     = "ServerAdministrator"
+	memberEntitlement   = "member"
+	siteRoleServerAdmin = "ServerAdministrator"
 )
 
 type groupResourceType struct {
