@@ -16,18 +16,28 @@ type Site struct {
 }
 
 type User struct {
-	Email     string    `json:"email"`
-	ID        string    `json:"id"`
-	FullName  string    `json:"fullName"`
-	Name      string    `json:"name"`
-	SiteRole  string    `json:"siteRole"`
-	LastLogin time.Time `json:"lastLogin"`
+	Email       string    `json:"email"`
+	ID          string    `json:"id"`
+	FullName    string    `json:"fullName"`
+	Name        string    `json:"name"`
+	SiteRole    string    `json:"siteRole"`
+	AuthSetting string    `json:"authSetting"`
+	LastLogin   time.Time `json:"lastLogin"`
 }
 
 type CreateUserRequest struct {
 	// has to be name in the payload
-	Email    string `json:"name"`
-	SiteRole string `json:"siteRole"`
+	Email              string `json:"name"`
+	SiteRole           string `json:"siteRole"`
+	AuthSetting        string `json:"authSetting,omitempty"`
+	IdpConfigurationId string `json:"idpConfigurationId,omitempty"`
+}
+
+type IdpConfiguration struct {
+	IdpConfigurationId   string `json:"idpConfigurationId"`
+	IdpConfigurationName string `json:"idpConfigurationName"`
+	AuthSetting          string `json:"authSetting"`
+	Enabled              bool   `json:"enabled"`
 }
 
 type Group struct {

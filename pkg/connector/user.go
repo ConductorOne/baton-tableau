@@ -2,6 +2,7 @@ package connector
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -10,7 +11,9 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
+	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/conductorone/baton-tableau/pkg/tableau"
+	"google.golang.org/grpc/codes"
 )
 
 var _ connectorbuilder.AccountManager = &userResourceType{}
@@ -37,10 +40,11 @@ func userResource(user *tableau.User, parentResourceID *v2.ResourceId) (*v2.Reso
 	}
 
 	profile := map[string]interface{}{
-		"first_name": firstName,
-		"last_name":  lastName,
-		"login":      user.Email,
-		"user_id":    user.ID,
+		"first_name":   firstName,
+		"last_name":    lastName,
+		"login":        user.Email,
+		"user_id":      user.ID,
+		"auth_setting": user.AuthSetting,
 	}
 
 	userTraitOptions := []rs.UserTraitOption{
@@ -121,10 +125,29 @@ func (o *userResourceType) CreateAccount(ctx context.Context, accountInfo *v2.Ac
 		return nil, nil, nil, fmt.Errorf("baton-tableau: siteRole not found in profile")
 	}
 
-	user, err := o.client.AddUserToSite(ctx, tableau.CreateUserRequest{
+	var idpID string
+	var err error
+	// Tableau API defaults to MFA authentication when IdpConfigurationId is empty.
+	// withMFA=true: Leave IdpConfigurationId empty to use Tableau's MFA default.
+	// withMFA=false: Select a SAML IDP configuration from the available IDPs.
+	withMFA, _ := pMap["withMFA"].(bool)
+	if !withMFA {
+		idpConfigName, _ := pMap["idpConfigurationName"].(string)
+		idpID, err = o.selectIDPConfiguration(ctx, idpConfigName)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("baton-tableau: failed to select IDP configuration: %w", err)
+		}
+	}
+
+	reqBody := tableau.CreateUserRequest{
 		Email:    email,
 		SiteRole: siteRole,
-	})
+	}
+	if idpID != "" {
+		reqBody.IdpConfigurationId = idpID
+	}
+
+	user, err := o.client.AddUserToSite(ctx, reqBody)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("baton-tableau: failed to create user %s: %w", email, err)
 	}
@@ -137,6 +160,38 @@ func (o *userResourceType) CreateAccount(ctx context.Context, accountInfo *v2.Ac
 	return &v2.CreateAccountResponse_SuccessResult{
 		Resource: resource,
 	}, nil, nil, nil
+}
+
+func (o *userResourceType) selectIDPConfiguration(ctx context.Context, idpConfigName string) (string, error) {
+	idpConfigs, err := o.client.ListIdpConfigurations(ctx)
+	if err != nil {
+		return "", fmt.Errorf("baton-tableau: failed to list IDP configurations: %w", err)
+	}
+
+	var enabledSAMLConfigs []tableau.IdpConfiguration
+	for i := range idpConfigs {
+		if idpConfigs[i].AuthSetting == "SAML" && idpConfigs[i].Enabled {
+			enabledSAMLConfigs = append(enabledSAMLConfigs, idpConfigs[i])
+		}
+	}
+
+	if len(enabledSAMLConfigs) == 0 {
+		return "", fmt.Errorf("baton-tableau: you need to pass the MFA flag since no IDP is configured in Tableau")
+	}
+
+	if idpConfigName != "" {
+		selectedConfig, err := findIDPByName(enabledSAMLConfigs, idpConfigName)
+		if err != nil {
+			return "", uhttp.WrapErrors(codes.InvalidArgument, fmt.Sprintf("IDP configuration '%s' not found", idpConfigName), buildMultipleIDPError(enabledSAMLConfigs))
+		}
+		return selectedConfig.IdpConfigurationId, nil
+	}
+
+	if len(enabledSAMLConfigs) == 1 {
+		return enabledSAMLConfigs[0].IdpConfigurationId, nil
+	}
+
+	return "", uhttp.WrapErrors(codes.InvalidArgument, "multiple SAML IDPs available", buildMultipleIDPError(enabledSAMLConfigs))
 }
 
 func (o *userResourceType) Delete(ctx context.Context, resourceId *v2.ResourceId) (annotations.Annotations, error) {
@@ -154,4 +209,25 @@ func userBuilder(client *tableau.Client) *userResourceType {
 		resourceType: resourceTypeUser,
 		client:       client,
 	}
+}
+
+func findIDPByName(configs []tableau.IdpConfiguration, name string) (*tableau.IdpConfiguration, error) {
+	lowerName := strings.ToLower(name)
+	for i := range configs {
+		if strings.ToLower(configs[i].IdpConfigurationName) == lowerName {
+			return &configs[i], nil
+		}
+	}
+	return nil, fmt.Errorf("IDP configuration with name '%s' not found", name)
+}
+
+func buildMultipleIDPError(configs []tableau.IdpConfiguration) error {
+	msg := fmt.Sprintf(`baton-tableau: multiple SAML IDP configurations found (%d available). Please specify idpConfigurationName in the account profile. Available IDPs:
+`, len(configs))
+
+	for _, config := range configs {
+		msg += fmt.Sprintf("  - \"%s\" (ID: %s)\n", config.IdpConfigurationName, config.IdpConfigurationId)
+	}
+
+	return errors.New(msg)
 }
