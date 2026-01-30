@@ -57,7 +57,7 @@ func viewResource(view *tableau.View, parentResourceID *v2.ResourceId) (*v2.Reso
 		rs.WithParentResourceID(parentResourceID),
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("tableau-connector: failed to create view resource: %w", err)
 	}
 
 	return ret, nil
@@ -78,7 +78,7 @@ func (v *viewResourceType) List(ctx context.Context, parentId *v2.ResourceId, to
 		viewCopy := view
 		vr, err := viewResource(&viewCopy, parentId)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, "", nil, fmt.Errorf("tableau-connector: failed to create view resource for %s: %w", view.Name, err)
 		}
 		rv = append(rv, vr)
 	}
@@ -129,7 +129,7 @@ func (v *viewResourceType) Grants(ctx context.Context, resource *v2.Resource, to
 			if grantee.User != nil {
 				principalID, err := rs.NewResourceID(resourceTypeUser, grantee.User.ID)
 				if err != nil {
-					return nil, "", nil, err
+					return nil, "", nil, fmt.Errorf("tableau-connector: failed to create user resource ID: %w", err)
 				}
 				g := grant.NewGrant(resource, capability.Name, principalID)
 				rv = append(rv, g)
@@ -139,7 +139,7 @@ func (v *viewResourceType) Grants(ctx context.Context, resource *v2.Resource, to
 				groupID := grantee.Group.ID
 				principalID, err := rs.NewResourceID(resourceTypeGroup, groupID)
 				if err != nil {
-					return nil, "", nil, err
+					return nil, "", nil, fmt.Errorf("tableau-connector: failed to create group resource ID: %w", err)
 				}
 				g := grant.NewGrant(
 					resource,
@@ -165,7 +165,7 @@ func (v *viewResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 	principalID := principal.Id.Resource
 	capabilityName, err := parseCapabilityFromEntitlementID(entitlement.Id)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse capability from entitlement ID: %w", err)
+		return nil, fmt.Errorf("tableau-connector: failed to parse capability from entitlement ID: %w", err)
 	}
 
 	switch principal.Id.ResourceType {
@@ -199,7 +199,7 @@ func (v *viewResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotat
 	principalID := principal.Id.Resource
 	capabilityName, err := parseCapabilityFromEntitlementID(entitlement.Id)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse capability from entitlement ID: %w", err)
+		return nil, fmt.Errorf("tableau-connector: failed to parse capability from entitlement ID: %w", err)
 	}
 
 	switch principal.Id.ResourceType {
@@ -233,7 +233,7 @@ func viewBuilder(client *tableau.Client) *viewResourceType {
 func parseCapabilityFromEntitlementID(entitlementID string) (string, error) {
 	parts := strings.Split(entitlementID, ":")
 	if len(parts) != 3 {
-		return "", fmt.Errorf("invalid entitlement ID: %s", entitlementID)
+		return "", fmt.Errorf("tableau-connector: invalid entitlement ID: %s", entitlementID)
 	}
 	return parts[2], nil
 }

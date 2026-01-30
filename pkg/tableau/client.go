@@ -466,7 +466,7 @@ func (c *Client) UpdateUserSiteRole(ctx context.Context, userId string, siteRole
 func (c *Client) GetViews(ctx context.Context, pageSize int, pageNumber int) ([]View, Pagination, error) {
 	endpoint, err := url.JoinPath(c.baseUrl, "sites", c.siteId, "views")
 	if err != nil {
-		return nil, Pagination{}, fmt.Errorf("failed to build URL: %w", err)
+		return nil, Pagination{}, fmt.Errorf("tableau-connector: failed to build URL: %w", err)
 	}
 	q := paginationQuery(pageSize, pageNumber)
 
@@ -478,7 +478,7 @@ func (c *Client) GetViews(ctx context.Context, pageSize int, pageNumber int) ([]
 	}
 
 	if err := c.doRequest(ctx, endpoint, &res, q, nil, http.MethodGet); err != nil {
-		return nil, Pagination{}, err
+		return nil, Pagination{}, fmt.Errorf("tableau-connector: failed to get views: %w", err)
 	}
 
 	return res.Views.View, res.Pagination, nil
@@ -497,13 +497,13 @@ func (c *Client) GetPaginatedViews(ctx context.Context) ([]View, error) {
 
 		pageSizeInt, err := strconv.Atoi(paginationData.PageSize)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("tableau-connector: failed to parse page size: %w", err)
 		}
 
 		totalReturned += pageSizeInt
 		totalAvailableInt, err := strconv.Atoi(paginationData.TotalAvailable)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("tableau-connector: failed to parse total available: %w", err)
 		}
 
 		views = append(views, allViews...)
@@ -520,7 +520,7 @@ func (c *Client) GetPaginatedViews(ctx context.Context) ([]View, error) {
 func (c *Client) GetViewPermissions(ctx context.Context, viewID string) ([]GranteeCapabilities, error) {
 	endpoint, err := url.JoinPath(c.baseUrl, "sites", c.siteId, "views", viewID, "permissions")
 	if err != nil {
-		return nil, fmt.Errorf("failed to build URL: %w", err)
+		return nil, fmt.Errorf("tableau-connector: failed to build URL: %w", err)
 	}
 
 	var res struct {
@@ -530,7 +530,7 @@ func (c *Client) GetViewPermissions(ctx context.Context, viewID string) ([]Grant
 	}
 
 	if err := c.doRequest(ctx, endpoint, &res, nil, nil, http.MethodGet); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("tableau-connector: failed to get view permissions: %w", err)
 	}
 
 	return res.Permissions.GranteeCapabilities, nil
@@ -539,7 +539,7 @@ func (c *Client) GetViewPermissions(ctx context.Context, viewID string) ([]Grant
 func (c *Client) AddViewPermission(ctx context.Context, viewID, userID, capabilityName, capabilityMode string) error {
 	endpoint, err := url.JoinPath(c.baseUrl, "sites", c.siteId, "views", viewID, "permissions")
 	if err != nil {
-		return fmt.Errorf("failed to build URL: %w", err)
+		return fmt.Errorf("tableau-connector: failed to build URL: %w", err)
 	}
 
 	requestBody, err := json.Marshal(map[string]interface{}{
@@ -563,12 +563,12 @@ func (c *Client) AddViewPermission(ctx context.Context, viewID, userID, capabili
 	})
 
 	if err != nil {
-		return err
+		return fmt.Errorf("tableau-connector: failed to marshal view permission request: %w", err)
 	}
 
 	var res struct{}
 	if err := c.doRequest(ctx, endpoint, &res, nil, requestBody, http.MethodPut); err != nil {
-		return err
+		return fmt.Errorf("tableau-connector: failed to add view permission: %w", err)
 	}
 
 	return nil
@@ -577,11 +577,11 @@ func (c *Client) AddViewPermission(ctx context.Context, viewID, userID, capabili
 func (c *Client) DeleteViewPermission(ctx context.Context, viewID, userID, capabilityName, capabilityMode string) error {
 	endpoint, err := url.JoinPath(c.baseUrl, "sites", c.siteId, "views", viewID, "permissions", "users", userID, capabilityName, capabilityMode)
 	if err != nil {
-		return fmt.Errorf("failed to build URL: %w", err)
+		return fmt.Errorf("tableau-connector: failed to build URL: %w", err)
 	}
 
 	if err := c.doRequest(ctx, endpoint, nil, nil, nil, http.MethodDelete); err != nil {
-		return err
+		return fmt.Errorf("tableau-connector: failed to delete view permission: %w", err)
 	}
 
 	return nil
@@ -590,7 +590,7 @@ func (c *Client) DeleteViewPermission(ctx context.Context, viewID, userID, capab
 func (c *Client) AddViewGroupPermission(ctx context.Context, viewID, groupID, capabilityName, capabilityMode string) error {
 	endpoint, err := url.JoinPath(c.baseUrl, "sites", c.siteId, "views", viewID, "permissions")
 	if err != nil {
-		return fmt.Errorf("failed to build URL: %w", err)
+		return fmt.Errorf("tableau-connector: failed to build URL: %w", err)
 	}
 
 	requestBody, err := json.Marshal(map[string]interface{}{
@@ -614,12 +614,12 @@ func (c *Client) AddViewGroupPermission(ctx context.Context, viewID, groupID, ca
 	})
 
 	if err != nil {
-		return err
+		return fmt.Errorf("tableau-connector: failed to marshal view group permission request: %w", err)
 	}
 
 	var res struct{}
 	if err := c.doRequest(ctx, endpoint, &res, nil, requestBody, http.MethodPut); err != nil {
-		return err
+		return fmt.Errorf("tableau-connector: failed to add view group permission: %w", err)
 	}
 
 	return nil
@@ -628,11 +628,11 @@ func (c *Client) AddViewGroupPermission(ctx context.Context, viewID, groupID, ca
 func (c *Client) DeleteViewGroupPermission(ctx context.Context, viewID, groupID, capabilityName, capabilityMode string) error {
 	endpoint, err := url.JoinPath(c.baseUrl, "sites", c.siteId, "views", viewID, "permissions", "groups", groupID, capabilityName, capabilityMode)
 	if err != nil {
-		return fmt.Errorf("failed to build URL: %w", err)
+		return fmt.Errorf("tableau-connector: failed to build URL: %w", err)
 	}
 
 	if err := c.doRequest(ctx, endpoint, nil, nil, nil, http.MethodDelete); err != nil {
-		return err
+		return fmt.Errorf("tableau-connector: failed to delete view group permission: %w", err)
 	}
 
 	return nil
