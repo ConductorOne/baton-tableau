@@ -220,12 +220,7 @@ func (c *Client) GetPaginatedUsers(ctx context.Context) ([]User, error) {
 			return nil, fmt.Errorf("tableau-connector: failed to list users: %w", err)
 		}
 
-		pageSizeInt, err := strconv.Atoi(paginationData.PageSize)
-		if err != nil {
-			return nil, err
-		}
-
-		totalReturned += pageSizeInt
+		totalReturned += len(allUsers)
 		totalAvailableInt, err := strconv.Atoi(paginationData.TotalAvailable)
 		if err != nil {
 			return nil, err
@@ -254,12 +249,7 @@ func (c *Client) GetPaginatedGroups(ctx context.Context) ([]Group, error) {
 			return nil, fmt.Errorf("tableau-connector: failed to list groups: %w", err)
 		}
 
-		pageSizeInt, err := strconv.Atoi(paginationData.PageSize)
-		if err != nil {
-			return nil, err
-		}
-
-		totalReturned += pageSizeInt
+		totalReturned += len(allGroups)
 		totalAvailableInt, err := strconv.Atoi(paginationData.TotalAvailable)
 		if err != nil {
 			return nil, err
@@ -288,12 +278,7 @@ func (c *Client) GetPaginatedGroupUsers(ctx context.Context, groupId string) ([]
 			return nil, fmt.Errorf("tableau-connector: failed to list group users: %w", err)
 		}
 
-		pageSizeInt, err := strconv.Atoi(paginationData.PageSize)
-		if err != nil {
-			return nil, err
-		}
-
-		totalReturned += pageSizeInt
+		totalReturned += len(allUsers)
 		totalAvailableInt, err := strconv.Atoi(paginationData.TotalAvailable)
 		if err != nil {
 			return nil, err
@@ -495,12 +480,7 @@ func (c *Client) GetPaginatedViews(ctx context.Context) ([]View, error) {
 			return nil, fmt.Errorf("tableau-connector: failed to list views: %w", err)
 		}
 
-		pageSizeInt, err := strconv.Atoi(paginationData.PageSize)
-		if err != nil {
-			return nil, fmt.Errorf("tableau-connector: failed to parse page size: %w", err)
-		}
-
-		totalReturned += pageSizeInt
+		totalReturned += len(allViews)
 		totalAvailableInt, err := strconv.Atoi(paginationData.TotalAvailable)
 		if err != nil {
 			return nil, fmt.Errorf("tableau-connector: failed to parse total available: %w", err)
