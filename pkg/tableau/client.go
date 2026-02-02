@@ -363,7 +363,7 @@ func (c *Client) RemoveUserFromGroup(ctx context.Context, groupId, userId string
 func (c *Client) doRequest(ctx context.Context, url string, res interface{}, q url.Values, body []byte, method string) error {
 	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return fmt.Errorf("tableau-connector: failed to create request: %w", err)
 	}
 
 	if q != nil {
@@ -377,12 +377,18 @@ func (c *Client) doRequest(ctx context.Context, url string, res interface{}, q u
 	// For DELETE requests, don't expect a JSON response
 	if method == http.MethodDelete {
 		_, err = c.httpClient.Do(req)
-		return err
+		if err != nil {
+			return fmt.Errorf("tableau-connector: %s request failed: %w", method, err)
+		}
+		return nil
 	}
 
 	// For other methods, parse JSON response
 	_, err = c.httpClient.Do(req, uhttp.WithJSONResponse(res))
-	return err
+	if err != nil {
+		return fmt.Errorf("tableau-connector: %s request failed: %w", method, err)
+	}
+	return nil
 }
 
 
