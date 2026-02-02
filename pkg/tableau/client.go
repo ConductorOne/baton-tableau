@@ -11,7 +11,6 @@ import (
 
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
-	"google.golang.org/grpc/codes"
 )
 
 const (
@@ -21,14 +20,14 @@ const (
 )
 
 type Client struct {
-	httpClient    *http.Client
+	httpClient    *uhttp.BaseHttpClient
 	authToken     string
 	siteId        string
 	baseUrl       string
 	currentUserId string
 }
 
-func NewClient(accessToken string, siteId string, baseUrl string, userId string, httpClient *http.Client) *Client {
+func NewClient(accessToken string, siteId string, baseUrl string, userId string, httpClient *uhttp.BaseHttpClient) *Client {
 	return &Client{
 		httpClient:    httpClient,
 		authToken:     accessToken,
@@ -374,60 +373,18 @@ func (c *Client) doRequest(ctx context.Context, url string, res interface{}, q u
 	req.Header.Add("X-Tableau-Auth", fmt.Sprint(c.authToken))
 	req.Header.Add("Accept", "application/json")
 	req.Header.Add("Content-Type", "application/json")
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
+
+	// For DELETE requests, don't expect a JSON response
+	if method == http.MethodDelete {
+		_, err = c.httpClient.Do(req)
 		return err
 	}
 
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 300 {
-		logBody(ctx, resp)
-		grpcCode := mapHTTPStatusToGRPCCode(resp.StatusCode)
-		return uhttp.WrapErrors(
-			grpcCode,
-			fmt.Sprintf("tableau-connector: request failed with status code %d", resp.StatusCode),
-			fmt.Errorf("HTTP %d", resp.StatusCode),
-		)
-	}
-
-	if method != http.MethodDelete {
-		if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	// For other methods, parse JSON response
+	_, err = c.httpClient.Do(req, uhttp.WithJSONResponse(res))
+	return err
 }
 
-func mapHTTPStatusToGRPCCode(statusCode int) codes.Code {
-	switch statusCode {
-	case http.StatusBadRequest:
-		return codes.InvalidArgument
-	case http.StatusUnauthorized:
-		return codes.Unauthenticated
-	case http.StatusForbidden:
-		return codes.PermissionDenied
-	case http.StatusNotFound:
-		return codes.NotFound
-	case http.StatusConflict:
-		return codes.AlreadyExists
-	case http.StatusRequestTimeout:
-		return codes.DeadlineExceeded
-	case http.StatusTooManyRequests:
-		return codes.Unavailable
-	case http.StatusInternalServerError:
-		return codes.Internal
-	case http.StatusNotImplemented:
-		return codes.Unimplemented
-	case http.StatusServiceUnavailable:
-		return codes.Unavailable
-	case http.StatusGatewayTimeout:
-		return codes.DeadlineExceeded
-	default:
-		return codes.Unknown
-	}
-}
 
 func (c *Client) AddUserToSite(ctx context.Context, user CreateUserRequest) (*User, error) {
 	url := fmt.Sprint(c.baseUrl, "/sites/", c.siteId, "/users")
