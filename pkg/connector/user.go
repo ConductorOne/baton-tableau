@@ -145,6 +145,9 @@ func (o *userResourceType) CreateAccount(ctx context.Context, accountInfo *v2.Ac
 	}
 	if idpID != "" {
 		reqBody.IdpConfigurationId = idpID
+		reqBody.AuthSetting = "SAML"
+	} else {
+		reqBody.AuthSetting = "TableauIDWithMFA"
 	}
 
 	user, err := o.client.AddUserToSite(ctx, reqBody)
