@@ -58,6 +58,7 @@ func siteResource(site tableau.Site) (*v2.Resource, error) {
 		rs.WithAnnotation(
 			&v2.ChildResourceType{ResourceTypeId: resourceTypeUser.Id},
 			&v2.ChildResourceType{ResourceTypeId: resourceTypeGroup.Id},
+			&v2.ChildResourceType{ResourceTypeId: resourceTypeView.Id},
 		),
 	}
 	ret, err := rs.NewResource(site.Name, resourceTypeSite, site.ID, siteOptions...)
@@ -107,7 +108,7 @@ func (o *siteResourceType) Grants(ctx context.Context, resource *v2.Resource, pt
 	for _, user := range users {
 		roleName := roles[user.SiteRole]
 		if roleName == "" {
-			ctxzap.Extract(ctx).Warn("Unknown Tableau Role Name",
+			ctxzap.Extract(ctx).Debug("Unknown Tableau Role Name",
 				zap.String("role_name", user.SiteRole),
 				zap.String("user", user.FullName),
 			)
