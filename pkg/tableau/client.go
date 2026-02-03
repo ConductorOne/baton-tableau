@@ -20,14 +20,14 @@ const (
 )
 
 type Client struct {
-	httpClient    *http.Client
+	httpClient    *uhttp.BaseHttpClient
 	authToken     string
 	siteId        string
 	baseUrl       string
 	currentUserId string
 }
 
-func NewClient(accessToken string, siteId string, baseUrl string, userId string, httpClient *http.Client) *Client {
+func NewClient(accessToken string, siteId string, baseUrl string, userId string, httpClient *uhttp.BaseHttpClient) *Client {
 	return &Client{
 		httpClient:    httpClient,
 		authToken:     accessToken,
@@ -363,7 +363,7 @@ func (c *Client) RemoveUserFromGroup(ctx context.Context, groupId, userId string
 func (c *Client) doRequest(ctx context.Context, url string, res interface{}, q url.Values, body []byte, method string) error {
 	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return fmt.Errorf("tableau-connector: failed to create request: %w", err)
 	}
 
 	if q != nil {
@@ -373,26 +373,26 @@ func (c *Client) doRequest(ctx context.Context, url string, res interface{}, q u
 	req.Header.Add("X-Tableau-Auth", fmt.Sprint(c.authToken))
 	req.Header.Add("Accept", "application/json")
 	req.Header.Add("Content-Type", "application/json")
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
 
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 300 {
-		logBody(ctx, resp)
-		return fmt.Errorf("tableau-connector: request failed with status code %d", resp.StatusCode)
-	}
-
-	if method != http.MethodDelete {
-		if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-			return err
+	// For DELETE requests, don't expect a JSON response
+	if method == http.MethodDelete {
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("tableau-connector: %s request failed: %w", method, err)
 		}
+		defer resp.Body.Close()
+		return nil
 	}
 
+	// For other methods, parse JSON response
+	resp, err := c.httpClient.Do(req, uhttp.WithJSONResponse(res))
+	if err != nil {
+		return fmt.Errorf("tableau-connector: %s request failed: %w", method, err)
+	}
+	defer resp.Body.Close()
 	return nil
 }
+
 
 func (c *Client) AddUserToSite(ctx context.Context, user CreateUserRequest) (*User, error) {
 	url := fmt.Sprint(c.baseUrl, "/sites/", c.siteId, "/users")

@@ -60,8 +60,13 @@ func New(ctx context.Context, baseUrl string, contentUrl string, personalAccessT
 		return nil, fmt.Errorf("tableau-connector: failed to login: %w", err)
 	}
 
+	baseHttpClient, err := uhttp.NewBaseHttpClientWithContext(ctx, httpClient)
+	if err != nil {
+		return nil, fmt.Errorf("tableau-connector: failed to create base http client: %w", err)
+	}
+
 	return &Tableau{
-		client:                    tableau.NewClient(credentials.Token, credentials.Site.ID, baseUrl, credentials.User.ID, httpClient),
+		client:                    tableau.NewClient(credentials.Token, credentials.Site.ID, baseUrl, credentials.User.ID, baseHttpClient),
 		personalAccessTokenName:   personalAccessTokenName,
 		personalAccessTokenSecret: personalAccessTokenSecret,
 		contentUrl:                contentUrl,
