@@ -174,7 +174,7 @@ func (v *viewResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 	case resourceTypeGroup.Id:
 		err = v.client.AddViewGroupPermission(ctx, viewID, principalID, capabilityName, "Allow")
 	default:
-		l.Warn(
+		l.Debug(
 			"baton-tableau: only users and groups can be granted view permissions",
 			zap.String("principal_type", principal.Id.ResourceType),
 			zap.String("principal_id", principal.Id.Resource),
@@ -208,7 +208,7 @@ func (v *viewResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotat
 	case resourceTypeGroup.Id:
 		err = v.client.DeleteViewGroupPermission(ctx, viewID, principalID, capabilityName, "Allow")
 	default:
-		l.Warn(
+		l.Debug(
 			"baton-tableau: only users and groups can have view permissions revoked",
 			zap.String("principal_type", principal.Id.ResourceType),
 			zap.String("principal_id", principal.Id.Resource),

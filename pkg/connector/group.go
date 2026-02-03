@@ -115,7 +115,6 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 				"baton-tableau: skipping server administrator in group membership (server-level admins are not site-scoped users)",
 				zap.String("group_id", groupId),
 				zap.String("user_id", user.ID),
-				zap.String("user_email", user.Email),
 			)
 			continue
 		}
@@ -137,7 +136,7 @@ func (o *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, e
 	l := ctxzap.Extract(ctx)
 
 	if principal.Id.ResourceType != resourceTypeUser.Id {
-		l.Warn(
+		l.Debug(
 			"baton-tableau: only users can be granted group membership",
 			zap.String("principal_type", principal.Id.ResourceType),
 			zap.String("principal_id", principal.Id.Resource),
@@ -160,7 +159,7 @@ func (o *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annota
 	principal := grant.Principal
 
 	if principal.Id.ResourceType != resourceTypeUser.Id {
-		l.Warn(
+		l.Debug(
 			"baton-tableau: only users can have group membership revoked",
 			zap.String("principal_type", principal.Id.ResourceType),
 			zap.String("principal_id", principal.Id.Resource),
