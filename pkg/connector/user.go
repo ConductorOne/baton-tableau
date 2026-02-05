@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -168,30 +169,32 @@ func (o *userResourceType) selectIDPConfiguration(ctx context.Context, idpConfig
 		return "", fmt.Errorf("baton-tableau: failed to list IDP configurations: %w", err)
 	}
 
-	var enabledSAMLConfigs []tableau.IdpConfiguration
+	allowedIdps := []string{"SAML", "OIDC", "OPENID"}
+	var enabledConfigs []tableau.IdpConfiguration
 	for i := range idpConfigs {
-		if idpConfigs[i].AuthSetting == "SAML" && idpConfigs[i].Enabled {
-			enabledSAMLConfigs = append(enabledSAMLConfigs, idpConfigs[i])
+		isAllowedIDP := slices.Contains(allowedIdps, strings.ToUpper(idpConfigs[i].AuthSetting))
+		if isAllowedIDP && idpConfigs[i].Enabled {
+			enabledConfigs = append(enabledConfigs, idpConfigs[i])
 		}
 	}
 
-	if len(enabledSAMLConfigs) == 0 {
+	if len(enabledConfigs) == 0 {
 		return "", fmt.Errorf("baton-tableau: you need to pass the MFA flag since no IDP is configured in Tableau")
 	}
 
 	if idpConfigName != "" {
-		selectedConfig, err := findIDPByName(enabledSAMLConfigs, idpConfigName)
+		selectedConfig, err := findIDPByName(enabledConfigs, idpConfigName)
 		if err != nil {
-			return "", uhttp.WrapErrors(codes.InvalidArgument, fmt.Sprintf("IDP configuration '%s' not found", idpConfigName), buildMultipleIDPError(enabledSAMLConfigs))
+			return "", uhttp.WrapErrors(codes.InvalidArgument, fmt.Sprintf("IDP configuration '%s' not found", idpConfigName), buildMultipleIDPError(enabledConfigs))
 		}
 		return selectedConfig.IdpConfigurationId, nil
 	}
 
-	if len(enabledSAMLConfigs) == 1 {
-		return enabledSAMLConfigs[0].IdpConfigurationId, nil
+	if len(enabledConfigs) == 1 {
+		return enabledConfigs[0].IdpConfigurationId, nil
 	}
 
-	return "", uhttp.WrapErrors(codes.InvalidArgument, "multiple SAML IDPs available", buildMultipleIDPError(enabledSAMLConfigs))
+	return "", uhttp.WrapErrors(codes.InvalidArgument, "multiple IDPs available", buildMultipleIDPError(enabledConfigs))
 }
 
 func (o *userResourceType) Delete(ctx context.Context, resourceId *v2.ResourceId) (annotations.Annotations, error) {
@@ -222,7 +225,7 @@ func findIDPByName(configs []tableau.IdpConfiguration, name string) (*tableau.Id
 }
 
 func buildMultipleIDPError(configs []tableau.IdpConfiguration) error {
-	msg := fmt.Sprintf(`baton-tableau: multiple SAML IDP configurations found (%d available). Please specify idpConfigurationName in the account profile. Available IDPs:
+	msg := fmt.Sprintf(`baton-tableau: multiple IDP configurations found (%d available). Please specify idpConfigurationName in the account profile. Available IDPs:
 `, len(configs))
 
 	for _, config := range configs {
