@@ -169,7 +169,7 @@ func (o *userResourceType) selectIDPConfiguration(ctx context.Context, idpConfig
 		return "", fmt.Errorf("baton-tableau: failed to list IDP configurations: %w", err)
 	}
 
-	allowedIdps := []string{"SAML", "OIDC", "OPENID"}
+	allowedIdps := []string{"SAML", "OPENID"}
 	var enabledConfigs []tableau.IdpConfiguration
 	for i := range idpConfigs {
 		isAllowedIDP := slices.Contains(allowedIdps, strings.ToUpper(idpConfigs[i].AuthSetting))
