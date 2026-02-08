@@ -43,7 +43,7 @@ func New(ctx context.Context, tc *cfg.Tableau, _ *cli.ConnectorOpts) (connectorb
 		return nil, nil, err
 	}
 
-	tableauClient, err := client.New(ctx, tc.ServerPath, tc.SiteId, tc.AccessTokenName, tc.AccessTokenSecret, tc.ApiVersion)
+	tableauClient, err := client.New(ctx, tc.ServerPath, tc.SiteId, tc.AccessTokenName, tc.AccessTokenSecret, tc.ApiVersion, tc.BaseUrl)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create client: %w", err)
 	}
