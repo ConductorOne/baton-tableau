@@ -81,6 +81,18 @@
       }
     },
     {
+      "name": "http-timeout-seconds",
+      "description": "HTTP client timeout in seconds (max 1800)",
+      "isOps": true,
+      "intField": {
+        "defaultValue": "300",
+        "rules": {
+          "lte": "1800",
+          "gte": "1"
+        }
+      }
+    },
+    {
       "name": "access-token-name",
       "displayName": "Access Token Name",
       "description": "Access token name used to connect to the Tableau API",
