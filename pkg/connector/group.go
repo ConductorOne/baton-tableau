@@ -15,10 +15,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	memberEntitlement   = "member"
-	siteRoleServerAdmin = "ServerAdministrator"
-)
+const memberEntitlement = "member"
 
 type groupResourceType struct {
 	resourceType *v2.ResourceType
@@ -108,17 +105,7 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 		return nil, "", nil, err
 	}
 
-	l := ctxzap.Extract(ctx)
 	for _, user := range users {
-		if user.SiteRole == siteRoleServerAdmin {
-			l.Debug(
-				"baton-tableau: skipping server administrator in group membership (server-level admins are not site-scoped users)",
-				zap.String("group_id", groupId),
-				zap.String("user_id", user.ID),
-			)
-			continue
-		}
-
 		userCopy := user
 		ur, err := userResource(&userCopy, resource.Id)
 		if err != nil {
@@ -136,7 +123,7 @@ func (o *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, e
 	l := ctxzap.Extract(ctx)
 
 	if principal.Id.ResourceType != resourceTypeUser.Id {
-		l.Debug(
+		l.Warn(
 			"baton-tableau: only users can be granted group membership",
 			zap.String("principal_type", principal.Id.ResourceType),
 			zap.String("principal_id", principal.Id.Resource),
@@ -159,7 +146,7 @@ func (o *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annota
 	principal := grant.Principal
 
 	if principal.Id.ResourceType != resourceTypeUser.Id {
-		l.Debug(
+		l.Warn(
 			"baton-tableau: only users can have group membership revoked",
 			zap.String("principal_type", principal.Id.ResourceType),
 			zap.String("principal_id", principal.Id.Resource),

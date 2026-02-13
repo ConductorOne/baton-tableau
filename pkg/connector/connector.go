@@ -39,11 +39,6 @@ var (
 			v2.ResourceType_TRAIT_ROLE,
 		},
 	}
-	resourceTypeView = &v2.ResourceType{
-		Id:          "view",
-		DisplayName: "View",
-		Description: "A Tableau dashboard/view",
-	}
 )
 
 type Tableau struct {
@@ -148,6 +143,5 @@ func (tb *Tableau) ResourceSyncers(ctx context.Context) []connectorbuilder.Resou
 		siteBuilder(tb.client),
 		groupBuilder(tb.client),
 		licenseBuilder(tb.client),
-		viewBuilder(tb.client),
 	}
 }
