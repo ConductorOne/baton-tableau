@@ -44,6 +44,7 @@ var (
 		"base-url",
 		field.WithDisplayName("Base URL"),
 		field.WithDescription("Override the Tableau API URL (for testing)"),
+		field.WithHidden(true),
 	)
 
 	ConfigurationFields = []field.SchemaField{
