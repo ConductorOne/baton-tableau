@@ -93,31 +93,19 @@ func Login(ctx context.Context, baseUrl string, contentUrl string, token string,
 		return Credentials{}, err
 	}
 
-	// Reconstruct URL from validated components to break gosec taint chain (G704).
-	sanitizedBase := (&url.URL{
-		Scheme: parsedURL.Scheme,
-		Host:   parsedURL.Host,
-		Path:   parsedURL.Path,
-	}).String()
-
-	endpoint, err := url.JoinPath(sanitizedBase, "auth", "signin")
+	endpoint, err := url.JoinPath(parsedURL.String(), "auth", "signin")
 	if err != nil {
 		return Credentials{}, fmt.Errorf("baton-tableau: failed to build login URL: %w", err)
 	}
 
-	validEndpoint, err := url.Parse(endpoint)
-	if err != nil {
-		return Credentials{}, fmt.Errorf("baton-tableau: invalid endpoint URL: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, validEndpoint.String(), bytes.NewReader(input))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(input))
 	if err != nil {
 		return Credentials{}, err
 	}
 
 	req.Header.Add("content-type", "application/json")
 	req.Header.Add("accept", "application/json")
-	resp, err := httpClient.Do(req)
+	resp, err := httpClient.Do(req) //#nosec G704 -- baseUrl is operator-configured via CLI flags, not end-user input; scheme and hostname are validated above.
 	if err != nil {
 		return Credentials{}, err
 	}
