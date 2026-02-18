@@ -44,32 +44,3 @@ type Group struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
-
-type View struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	ContentURL string `json:"contentUrl"`
-}
-
-type GranteeCapabilities struct {
-	User         *UserRef     `json:"user,omitempty"`
-	Group        *GroupRef    `json:"group,omitempty"`
-	Capabilities Capabilities `json:"capabilities"`
-}
-
-type UserRef struct {
-	ID string `json:"id"`
-}
-
-type GroupRef struct {
-	ID string `json:"id"`
-}
-
-type Capabilities struct {
-	Capability []Capability `json:"capability"`
-}
-
-type Capability struct {
-	Name string `json:"name"`
-	Mode string `json:"mode"`
-}
