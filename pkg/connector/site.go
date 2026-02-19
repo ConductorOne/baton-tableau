@@ -3,18 +3,16 @@ package connector
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/pagination"
-	"github.com/conductorone/baton-tableau/pkg/tableau"
-	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
-	"go.uber.org/zap"
-
 	ent "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
+	"github.com/conductorone/baton-tableau/pkg/client"
+	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"go.uber.org/zap"
 )
 
 const (
@@ -43,21 +41,21 @@ var roles = map[string]string{
 	readOnly:                  "readonly",
 }
 
-type siteResourceType struct {
-	resourceType *v2.ResourceType
-	client       *tableau.Client
+type siteBuilder struct {
+	client *client.Client
 }
 
-func (o *siteResourceType) ResourceType(_ context.Context) *v2.ResourceType {
-	return o.resourceType
+func (s *siteBuilder) ResourceType(_ context.Context) *v2.ResourceType {
+	return resourceTypeSite
 }
 
 // Create a new connector resource for a Tableau site.
-func siteResource(site tableau.Site) (*v2.Resource, error) {
+func siteResource(site *client.Site) (*v2.Resource, error) {
 	siteOptions := []rs.ResourceOption{
 		rs.WithAnnotation(
 			&v2.ChildResourceType{ResourceTypeId: resourceTypeUser.Id},
 			&v2.ChildResourceType{ResourceTypeId: resourceTypeGroup.Id},
+			&v2.ChildResourceType{ResourceTypeId: resourceTypeProject.Id},
 		),
 	}
 	ret, err := rs.NewResource(site.Name, resourceTypeSite, site.ID, siteOptions...)
@@ -68,22 +66,22 @@ func siteResource(site tableau.Site) (*v2.Resource, error) {
 	return ret, nil
 }
 
-func (o *siteResourceType) List(ctx context.Context, _ *v2.ResourceId, _ *pagination.Token) ([]*v2.Resource, string, annotations.Annotations, error) {
+func (s *siteBuilder) List(ctx context.Context, _ *v2.ResourceId, _ *pagination.Token) ([]*v2.Resource, string, annotations.Annotations, error) {
 	var rv []*v2.Resource
-	site, err := o.client.GetSite(ctx)
+	site, _, err := s.client.GetSite(ctx)
 	if err != nil {
 		return nil, "", nil, err
 	}
-	sr, err := siteResource(site)
+	siteResource, err := siteResource(site)
 	if err != nil {
 		return nil, "", nil, err
 	}
-	rv = append(rv, sr)
+	rv = append(rv, siteResource)
 
 	return rv, "", nil, nil
 }
 
-func (o *siteResourceType) Entitlements(_ context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
+func (s *siteBuilder) Entitlements(_ context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
 	var rv []*v2.Entitlement
 	for _, role := range roles {
 		permissionOptions := []ent.EntitlementOption{
@@ -92,17 +90,18 @@ func (o *siteResourceType) Entitlements(_ context.Context, resource *v2.Resource
 			ent.WithDisplayName(fmt.Sprintf("%s Site %s", resource.DisplayName, role)),
 		}
 
-		permissionEn := ent.NewPermissionEntitlement(resource, role, permissionOptions...)
-		rv = append(rv, permissionEn)
+		permissionEntitlement := ent.NewPermissionEntitlement(resource, role, permissionOptions...)
+		rv = append(rv, permissionEntitlement)
 	}
 	return rv, "", nil, nil
 }
 
-func (o *siteResourceType) Grants(ctx context.Context, resource *v2.Resource, pt *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
-	users, err := o.client.GetPaginatedUsers(ctx)
+func (s *siteBuilder) Grants(ctx context.Context, resource *v2.Resource, pToken *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
+	users, nextToken, _, err := s.client.GetUsers(ctx, pToken.Token)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, "", nil, fmt.Errorf("failed to list users: %w", err)
 	}
+
 	var rv []*v2.Grant
 	for _, user := range users {
 		roleName := roles[user.SiteRole]
@@ -112,20 +111,20 @@ func (o *siteResourceType) Grants(ctx context.Context, resource *v2.Resource, pt
 				zap.String("user", user.FullName),
 			)
 		}
-		userCopy := user
-		ur, err := userResource(&userCopy, resource.Id)
+		userResource, err := userResource(&user, resource.Id)
 		if err != nil {
 			return nil, "", nil, err
 		}
 
-		permissionGrant := grant.NewGrant(resource, roleName, ur.Id)
+		permissionGrant := grant.NewGrant(resource, roleName, userResource.Id)
 		rv = append(rv, permissionGrant)
 	}
-	return rv, "", nil, nil
+
+	return rv, nextToken, nil, nil
 }
 
-func (o *siteResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
-	roleName, err := parseRoleFromEntitlementID(entitlement.Id)
+func (s *siteBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
+	roleName, err := parseEntitlementSlug(entitlement.Id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse role from entitlement ID: %w", err)
 	}
@@ -143,36 +142,27 @@ func (o *siteResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 		return nil, fmt.Errorf("unknown role: %s", roleName)
 	}
 
-	err = o.client.UpdateUserSiteRole(ctx, principalID, apiRoleName)
+	annos, err := s.client.UpdateUserSiteRole(ctx, principalID, apiRoleName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to grant %s role to user %s: %w", roleName, principalID, err)
+		return annos, fmt.Errorf("failed to grant %s role to user %s: %w", roleName, principalID, err)
 	}
 
-	return nil, nil
+	return annos, nil
 }
 
-func (o *siteResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
+func (s *siteBuilder) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
 	principalID := grant.Principal.Id.Resource
 
-	err := o.client.UpdateUserSiteRole(ctx, principalID, unlicensed)
+	annos, err := s.client.UpdateUserSiteRole(ctx, principalID, unlicensed)
 	if err != nil {
-		return nil, fmt.Errorf("failed to revoke site role from user %s: %w", principalID, err)
+		return annos, fmt.Errorf("failed to revoke site role from user %s: %w", principalID, err)
 	}
 
-	return nil, nil
+	return annos, nil
 }
 
-func siteBuilder(client *tableau.Client) *siteResourceType {
-	return &siteResourceType{
-		resourceType: resourceTypeSite,
-		client:       client,
+func newSiteBuilder(client *client.Client) *siteBuilder {
+	return &siteBuilder{
+		client: client,
 	}
-}
-
-func parseRoleFromEntitlementID(entitlementID string) (string, error) {
-	parts := strings.Split(entitlementID, ":")
-	if len(parts) != 3 {
-		return "", fmt.Errorf("invalid entitlement ID: %s", entitlementID)
-	}
-	return parts[2], nil
 }

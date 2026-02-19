@@ -10,25 +10,33 @@ import (
 	ent "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
-	"github.com/conductorone/baton-tableau/pkg/tableau"
+	"github.com/conductorone/baton-tableau/pkg/client"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
 )
 
-const memberEntitlement = "member"
+const (
+	siteRoleServerAdmin = "ServerAdministrator"
+	allUsersGroupName   = "All Users"
+)
 
-type groupResourceType struct {
-	resourceType *v2.ResourceType
-	client       *tableau.Client
+// isAllUsersGroup checks if the resource is the Tableau-managed "All Users" group.
+// This group auto-includes all site users and cannot be modified via the API.
+func isAllUsersGroup(resource *v2.Resource) bool {
+	return resource != nil && resource.DisplayName == allUsersGroupName
 }
 
-func (g *groupResourceType) ResourceType(_ context.Context) *v2.ResourceType {
-	return g.resourceType
+type groupBuilder struct {
+	client *client.Client
+}
+
+func (g *groupBuilder) ResourceType(_ context.Context) *v2.ResourceType {
+	return resourceTypeGroup
 }
 
 // Create a new connector resource for a Tableau group.
-func groupResource(group *tableau.Group, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
-	profile := map[string]interface{}{
+func groupResource(group *client.Group, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
+	profile := map[string]any{
 		"group_id":   group.ID,
 		"group_name": group.Name,
 	}
@@ -49,30 +57,29 @@ func groupResource(group *tableau.Group, parentResourceID *v2.ResourceId) (*v2.R
 	return ret, nil
 }
 
-func (g *groupResourceType) List(ctx context.Context, parentId *v2.ResourceId, token *pagination.Token) ([]*v2.Resource, string, annotations.Annotations, error) {
+func (g *groupBuilder) List(ctx context.Context, parentId *v2.ResourceId, pToken *pagination.Token) ([]*v2.Resource, string, annotations.Annotations, error) {
 	if parentId == nil {
 		return nil, "", nil, nil
 	}
 
-	groups, err := g.client.GetPaginatedGroups(ctx)
+	groups, nextToken, _, err := g.client.GetGroups(ctx, pToken.Token)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("tableau-connector: failed to list groups: %w", err)
+		return nil, "", nil, fmt.Errorf("failed to list groups: %w", err)
 	}
 
 	var rv []*v2.Resource
 	for _, group := range groups {
-		groupCopy := group
-		ur, err := groupResource(&groupCopy, parentId)
+		ur, err := groupResource(&group, parentId)
 		if err != nil {
 			return nil, "", nil, err
 		}
 		rv = append(rv, ur)
 	}
 
-	return rv, "", nil, nil
+	return rv, nextToken, nil, nil
 }
 
-func (g *groupResourceType) Entitlements(_ context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
+func (g *groupBuilder) Entitlements(_ context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
 	var rv []*v2.Entitlement
 
 	assigmentOptions := []ent.EntitlementOption{
@@ -87,9 +94,7 @@ func (g *groupResourceType) Entitlements(_ context.Context, resource *v2.Resourc
 	return rv, "", nil, nil
 }
 
-func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, token *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
-	var rv []*v2.Grant
-
+func (g *groupBuilder) Grants(ctx context.Context, resource *v2.Resource, pToken *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
 	groupTrait, err := rs.GetGroupTrait(resource)
 	if err != nil {
 		return nil, "", nil, err
@@ -100,71 +105,105 @@ func (g *groupResourceType) Grants(ctx context.Context, resource *v2.Resource, t
 		return nil, "", nil, fmt.Errorf("error fetching group_id from group profile")
 	}
 
-	users, err := g.client.GetPaginatedGroupUsers(ctx, groupId)
+	users, nextToken, _, err := g.client.GetGroupUsers(ctx, groupId, pToken.Token)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, "", nil, fmt.Errorf("failed to list group users: %w", err)
 	}
 
+	var rv []*v2.Grant
+	immutable := isAllUsersGroup(resource)
+	l := ctxzap.Extract(ctx)
 	for _, user := range users {
-		userCopy := user
-		ur, err := userResource(&userCopy, resource.Id)
+		if user.SiteRole == siteRoleServerAdmin {
+			l.Debug(
+				"skipping server administrator in group membership (server-level admins are not site-scoped users)",
+				zap.String("group_id", groupId),
+				zap.String("user_id", user.ID),
+			)
+			continue
+		}
+
+		userResource, err := userResource(&user, resource.Id)
 		if err != nil {
 			return nil, "", nil, err
 		}
 
-		grant := grant.NewGrant(resource, memberEntitlement, ur.Id)
-		rv = append(rv, grant)
+		var grantOpts []grant.GrantOption
+		if immutable {
+			grantOpts = append(grantOpts, grant.WithAnnotation(&v2.GrantImmutable{}))
+		}
+
+		gr := grant.NewGrant(resource, memberEntitlement, userResource.Id, grantOpts...)
+		rv = append(rv, gr)
 	}
 
-	return rv, "", nil, nil
+	return rv, nextToken, nil, nil
 }
 
-func (o *groupResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
+func (g *groupBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
 	l := ctxzap.Extract(ctx)
 
+	// "All Users" is Tableau-managed and auto-includes every user. The user is already a member.
+	if isAllUsersGroup(entitlement.Resource) {
+		l.Debug("skipping grant: All Users group membership is automatic", zap.String("principal_id", principal.Id.Resource))
+		return annotations.New(&v2.GrantAlreadyExists{}), nil
+	}
+
 	if principal.Id.ResourceType != resourceTypeUser.Id {
-		l.Warn(
-			"baton-tableau: only users can be granted group membership",
+		l.Debug(
+			"only users can be granted group membership",
 			zap.String("principal_type", principal.Id.ResourceType),
 			zap.String("principal_id", principal.Id.Resource),
 		)
-		return nil, fmt.Errorf("baton-tableau: only users can be granted group membership")
+		return nil, fmt.Errorf("only users can be granted group membership")
 	}
 
-	err := o.client.AddUserToGroup(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
+	annos, err := g.client.AddUserToGroup(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
 	if err != nil {
-		return nil, fmt.Errorf("baton-tableau: failed to add user to group: %w", err)
+		if isAlreadyExistsError(err) {
+			return annotations.New(&v2.GrantAlreadyExists{}), nil
+		}
+		return annos, fmt.Errorf("failed to add user to group: %w", err)
 	}
 
-	return nil, nil
+	return annos, nil
 }
 
-func (o *groupResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
+func (g *groupBuilder) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
 	l := ctxzap.Extract(ctx)
 
 	entitlement := grant.Entitlement
 	principal := grant.Principal
 
+	// "All Users" is Tableau-managed. Users cannot be removed from it.
+	if isAllUsersGroup(entitlement.Resource) {
+		l.Warn("cannot revoke All Users group membership: this group is managed by Tableau and cannot be modified",
+			zap.String("principal_id", principal.Id.Resource))
+		return nil, fmt.Errorf("cannot revoke membership from the 'All Users' group: this group is automatically managed by Tableau and cannot be modified via the API")
+	}
+
 	if principal.Id.ResourceType != resourceTypeUser.Id {
-		l.Warn(
-			"baton-tableau: only users can have group membership revoked",
+		l.Debug(
+			"only users can have group membership revoked",
 			zap.String("principal_type", principal.Id.ResourceType),
 			zap.String("principal_id", principal.Id.Resource),
 		)
-		return nil, fmt.Errorf("baton-tableau: only users can have group membership revoked")
+		return nil, fmt.Errorf("only users can have group membership revoked")
 	}
 
-	err := o.client.RemoveUserFromGroup(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
+	annos, err := g.client.RemoveUserFromGroup(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
 	if err != nil {
-		return nil, fmt.Errorf("baton-tableau: failed to remove user from group: %w", err)
+		if isNotFoundError(err) {
+			return annotations.New(&v2.GrantAlreadyRevoked{}), nil
+		}
+		return annos, fmt.Errorf("failed to remove user from group: %w", err)
 	}
 
-	return nil, nil
+	return annos, nil
 }
 
-func groupBuilder(client *tableau.Client) *groupResourceType {
-	return &groupResourceType{
-		resourceType: resourceTypeGroup,
-		client:       client,
+func newGroupBuilder(client *client.Client) *groupBuilder {
+	return &groupBuilder{
+		client: client,
 	}
 }
