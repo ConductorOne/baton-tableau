@@ -40,7 +40,8 @@ var workbookCapabilities = map[string]string{
 }
 
 type workbookBuilder struct {
-	client *client.Client
+	client       *client.Client
+	projectNames map[string]string
 }
 
 func (w *workbookBuilder) ResourceType(_ context.Context) *v2.ResourceType {
@@ -69,16 +70,23 @@ func (w *workbookBuilder) List(ctx context.Context, parentId *v2.ResourceId, pTo
 		return nil, "", nil, nil
 	}
 
-	workbooks, nextToken, _, err := w.client.GetWorkbooks(ctx, pToken.Token)
+	projectName, err := w.resolveProjectName(ctx, parentId.Resource)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("failed to resolve project name for %s: %w", parentId.Resource, err)
+	}
+
+	var opts []client.ReqOpt
+	if projectName != "" {
+		opts = append(opts, client.WithFilter(fmt.Sprintf("projectName:eq:%s", projectName)))
+	}
+
+	workbooks, nextToken, _, err := w.client.GetWorkbooks(ctx, pToken.Token, opts...)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("failed to list workbooks: %w", err)
 	}
 
 	var rv []*v2.Resource
 	for _, workbook := range workbooks {
-		if workbook.Project == nil || workbook.Project.ID != parentId.Resource {
-			continue
-		}
 		wr, err := workbookResource(&workbook, parentId)
 		if err != nil {
 			return nil, "", nil, fmt.Errorf("failed to create workbook resource for %s: %w", workbook.Name, err)
@@ -87,6 +95,24 @@ func (w *workbookBuilder) List(ctx context.Context, parentId *v2.ResourceId, pTo
 	}
 
 	return rv, nextToken, nil, nil
+}
+
+func (w *workbookBuilder) resolveProjectName(ctx context.Context, projectID string) (string, error) {
+	if w.projectNames != nil {
+		return w.projectNames[projectID], nil
+	}
+
+	projects, err := w.client.GetAllProjects(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to list projects: %w", err)
+	}
+
+	w.projectNames = make(map[string]string, len(projects))
+	for _, p := range projects {
+		w.projectNames[p.ID] = p.Name
+	}
+
+	return w.projectNames[projectID], nil
 }
 
 func (w *workbookBuilder) Entitlements(_ context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {

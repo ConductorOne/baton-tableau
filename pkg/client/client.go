@@ -143,10 +143,12 @@ func Login(ctx context.Context, httpClient *uhttp.BaseHttpClient, baseUrl, conte
 
 	var res credentialsResponse
 	resp, err := httpClient.Do(req, uhttp.WithJSONResponse(&res))
+	if resp != nil {
+		defer resp.Body.Close()
+	}
 	if err != nil {
 		return nil, fmt.Errorf("login failed: %w", err)
 	}
-	defer resp.Body.Close()
 
 	return &res.Credentials, nil
 }
@@ -175,15 +177,15 @@ func (c *Client) GetSite(ctx context.Context) (*Site, annotations.Annotations, e
 // Users API
 // =============================================================================
 
-// GetUsers returns a page of users on the site.
-func (c *Client) GetUsers(ctx context.Context, pageToken string) ([]User, string, annotations.Annotations, error) {
+// GetUsers returns a page of users on the site, optionally filtered by query parameters.
+func (c *Client) GetUsers(ctx context.Context, pageToken string, opts ...ReqOpt) ([]User, string, annotations.Annotations, error) {
 	page := parsePageToken(pageToken)
 
 	urlGetUsers, err := c.buildSiteURL(pathUsers)
 	if err != nil {
 		return nil, "", nil, err
 	}
-	applyOpts(urlGetUsers, withPagination(page))
+	applyOpts(urlGetUsers, append([]ReqOpt{withPagination(page)}, opts...)...)
 
 	var res usersResponse
 	annos, err := c.doRequest(ctx, http.MethodGet, urlGetUsers, &res, nil)
@@ -356,6 +358,27 @@ func (c *Client) GetProjects(ctx context.Context, pageToken string) ([]Project, 
 	return res.Projects.Project, nextToken, annos, nil
 }
 
+// GetAllProjects returns every project on the site, handling pagination internally.
+func (c *Client) GetAllProjects(ctx context.Context) ([]Project, error) {
+	var all []Project
+
+	for pageToken := ""; ; {
+		projects, nextToken, _, err := c.GetProjects(ctx, pageToken)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get all projects: %w", err)
+		}
+
+		all = append(all, projects...)
+
+		if nextToken == "" {
+			break
+		}
+		pageToken = nextToken
+	}
+
+	return all, nil
+}
+
 // GetProjectPermissions returns permissions for a project.
 func (c *Client) GetProjectPermissions(ctx context.Context, projectID string) ([]GranteeCapabilities, annotations.Annotations, error) {
 	urlGetProjectPermissions, err := c.buildSiteURL(pathProjects, projectID, pathPermissions)
@@ -396,7 +419,7 @@ func (c *Client) DeleteProjectGroupPermission(ctx context.Context, projectID, gr
 // Workbooks API
 // =============================================================================
 
-// GetWorkbooks returns a page of workbooks on the site, optionally filtered by project name.
+// GetWorkbooks returns a page of workbooks on the site, optionally filtered by query parameters.
 func (c *Client) GetWorkbooks(ctx context.Context, pageToken string, opts ...ReqOpt) ([]Workbook, string, annotations.Annotations, error) {
 	page := parsePageToken(pageToken)
 
@@ -476,7 +499,7 @@ func (c *Client) DeleteWorkbookPermission(ctx context.Context, workbookID, userI
 
 // AddWorkbookGroupPermission adds a group permission to a workbook.
 func (c *Client) AddWorkbookGroupPermission(ctx context.Context, workbookID, groupID, capabilityName, capabilityMode string) (annotations.Annotations, error) {
-	return c.addPermission(ctx, []string{pathWorkbooks, workbookID, pathPermissions}, "group", groupID, capabilityName, capabilityMode)
+	return c.addPermission(ctx, []string{pathWorkbooks, workbookID, pathPermissions}, pathGroup, groupID, capabilityName, capabilityMode)
 }
 
 // DeleteWorkbookGroupPermission removes a group permission from a workbook.
@@ -666,14 +689,17 @@ func (c *Client) doRequest(ctx context.Context, method string, url *url.URL, res
 
 	resp, err := c.httpClient.Do(req, doOpts...)
 	annos := annotations.New(&rlData)
+	if resp != nil {
+		defer resp.Body.Close()
+	}
 	if err != nil {
-		detail := extractTableauError(resp)
-		if detail != "" {
-			return annos, fmt.Errorf("%s request failed (%s): %w", method, detail, err)
+		if resp != nil {
+			if detail := extractTableauError(resp); detail != "" {
+				return annos, fmt.Errorf("%s request failed (%s): %w", method, detail, err)
+			}
 		}
 		return annos, fmt.Errorf("%s request failed: %w", method, err)
 	}
-	defer resp.Body.Close()
 
 	return annos, nil
 }

@@ -29,16 +29,21 @@ const (
 )
 
 // BuildBaseURL constructs the Tableau REST API base URL from a server path and API version.
-// It normalizes the server path by stripping any protocol prefix and defaults
-// the API version to DefaultAPIVersion if empty.
+// It preserves the scheme if provided (useful for HTTP-based testing), otherwise defaults
+// to HTTPS. The API version defaults to DefaultAPIVersion if empty.
 func BuildBaseURL(serverPath, apiVersion string) (string, error) {
-	serverPath = strings.TrimPrefix(serverPath, "https://")
-	serverPath = strings.TrimPrefix(serverPath, "http://")
 	if apiVersion == "" {
 		apiVersion = DefaultAPIVersion
 	}
+	if !strings.Contains(serverPath, "://") {
+		serverPath = "https://" + serverPath
+	}
+	base, err := url.Parse(serverPath)
+	if err != nil {
+		return "", fmt.Errorf("invalid server path %q: %w", serverPath, err)
+	}
 
-	return url.JoinPath("https://", serverPath, "api", apiVersion)
+	return url.JoinPath(base.String(), "api", apiVersion)
 }
 
 // parsePageToken parses a page token string to a 1-based page number, defaulting to 1.
@@ -90,6 +95,15 @@ func withPagination(page int) ReqOpt {
 	}
 }
 
+// WithFilter adds a filter query parameter (e.g. "siteRole:eq:Viewer").
+func WithFilter(filter string) ReqOpt {
+	return func(u *url.URL) {
+		q := u.Query()
+		q.Set("filter", filter)
+		u.RawQuery = q.Encode()
+	}
+}
+
 // applyOpts applies all ReqOpts to a URL.
 func applyOpts(u *url.URL, opts ...ReqOpt) {
 	for _, opt := range opts {
@@ -136,7 +150,6 @@ func extractTableauError(resp *http.Response) string {
 	if resp == nil || resp.Body == nil {
 		return ""
 	}
-	defer resp.Body.Close()
 
 	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if err != nil || len(bodyBytes) == 0 {
