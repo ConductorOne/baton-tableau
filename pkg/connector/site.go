@@ -70,11 +70,11 @@ func (s *siteBuilder) List(ctx context.Context, _ *v2.ResourceId, _ *pagination.
 	var rv []*v2.Resource
 	site, _, err := s.client.GetSite(ctx)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, "", nil, fmt.Errorf("failed to get site: %w", err)
 	}
 	siteResource, err := siteResource(site)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, "", nil, fmt.Errorf("failed to build site resource: %w", err)
 	}
 	rv = append(rv, siteResource)
 
@@ -113,7 +113,7 @@ func (s *siteBuilder) Grants(ctx context.Context, resource *v2.Resource, pToken 
 		}
 		userResource, err := userResource(&user, resource.Id)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, "", nil, fmt.Errorf("failed to build user resource for %s: %w", user.ID, err)
 		}
 
 		permissionGrant := grant.NewGrant(resource, roleName, userResource.Id)

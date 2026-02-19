@@ -59,9 +59,10 @@ func userResource(user *client.User, parentResourceID *v2.ResourceId) (*v2.Resou
 		user.ID,
 		userTraitOptions,
 		rs.WithParentResourceID(parentResourceID),
+		rs.WithExternalID(&v2.ExternalId{Id: user.ID}),
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create user resource for %s: %w", user.ID, err)
 	}
 
 	return ret, nil
@@ -81,7 +82,7 @@ func (u *userBuilder) List(ctx context.Context, parentId *v2.ResourceId, pToken 
 	for _, user := range users {
 		ur, err := userResource(&user, parentId)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, "", nil, fmt.Errorf("failed to build user resource for %s: %w", user.ID, err)
 		}
 		rv = append(rv, ur)
 	}

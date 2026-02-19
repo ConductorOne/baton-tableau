@@ -71,7 +71,7 @@ func (g *groupBuilder) List(ctx context.Context, parentId *v2.ResourceId, pToken
 	for _, group := range groups {
 		ur, err := groupResource(&group, parentId)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, "", nil, fmt.Errorf("failed to build group resource for %s: %w", group.ID, err)
 		}
 		rv = append(rv, ur)
 	}
@@ -97,12 +97,12 @@ func (g *groupBuilder) Entitlements(_ context.Context, resource *v2.Resource, _ 
 func (g *groupBuilder) Grants(ctx context.Context, resource *v2.Resource, pToken *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
 	groupTrait, err := rs.GetGroupTrait(resource)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, "", nil, fmt.Errorf("failed to get group trait: %w", err)
 	}
 
 	groupId, ok := rs.GetProfileStringValue(groupTrait.Profile, "group_id")
 	if !ok {
-		return nil, "", nil, fmt.Errorf("error fetching group_id from group profile")
+		return nil, "", nil, fmt.Errorf("missing group_id in group profile")
 	}
 
 	users, nextToken, _, err := g.client.GetGroupUsers(ctx, groupId, pToken.Token)
@@ -125,7 +125,7 @@ func (g *groupBuilder) Grants(ctx context.Context, resource *v2.Resource, pToken
 
 		userResource, err := userResource(&user, resource.Id)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, "", nil, fmt.Errorf("failed to build user resource for %s: %w", user.ID, err)
 		}
 
 		var grantOpts []grant.GrantOption

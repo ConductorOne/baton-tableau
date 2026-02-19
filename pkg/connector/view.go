@@ -145,7 +145,7 @@ func (v *viewBuilder) Grant(ctx context.Context, principal *v2.Resource, entitle
 	if entitlement.Resource.ParentResourceId != nil {
 		showTabs, err := v.getShowTabs(ctx, entitlement.Resource.ParentResourceId.Resource)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to check showTabs for grant: %w", err)
 		}
 		if showTabs {
 			return nil, fmt.Errorf("cannot grant view permission: parent workbook has showTabs enabled, permissions are inherited from the workbook")
@@ -159,7 +159,7 @@ func (v *viewBuilder) Revoke(ctx context.Context, g *v2.Grant) (annotations.Anno
 	if g.Entitlement.Resource.ParentResourceId != nil {
 		showTabs, err := v.getShowTabs(ctx, g.Entitlement.Resource.ParentResourceId.Resource)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to check showTabs for revoke: %w", err)
 		}
 		if showTabs {
 			return nil, fmt.Errorf("cannot revoke view permission: parent workbook has showTabs enabled, permissions are inherited from the workbook")

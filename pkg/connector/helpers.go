@@ -129,7 +129,7 @@ func grantPermission(
 	case resourceTypeGroup.Id:
 		annos, err = addGroupPerm(ctx, resourceID, principalID, capabilityName, allowMode)
 	default:
-		return nil, fmt.Errorf("baton-tableau: only users and groups can be granted permissions, got %s", principal.Id.ResourceType)
+		return nil, fmt.Errorf("only users and groups can be granted permissions, got %s", principal.Id.ResourceType)
 	}
 
 	if err != nil {
@@ -166,7 +166,7 @@ func revokePermission(
 	case resourceTypeGroup.Id:
 		annos, err = deleteGroupPerm(ctx, resourceID, principalID, capabilityName, allowMode)
 	default:
-		return nil, fmt.Errorf("baton-tableau: only users and groups can have permissions revoked, got %s", principal.Id.ResourceType)
+		return nil, fmt.Errorf("only users and groups can have permissions revoked, got %s", principal.Id.ResourceType)
 	}
 
 	if err != nil {
@@ -177,4 +177,31 @@ func revokePermission(
 	}
 
 	return annos, nil
+}
+
+// unsupportedFilterRoles are legacy Tableau Server roles that the REST API
+// filter endpoint does not recognize (returns NullPointerException).
+var unsupportedFilterRoles = map[string]bool{
+	readOnly:          true,
+	siteAdministrator: true,
+}
+
+// filterableRoles returns only the roles that the Tableau filter API supports.
+func filterableRoles(roles []string) []string {
+	var result []string
+	for _, r := range roles {
+		if !unsupportedFilterRoles[r] {
+			result = append(result, r)
+		}
+	}
+	return result
+}
+
+// siteRoleFilter builds a Tableau API filter expression for the given site roles.
+func siteRoleFilter(roles []string) client.ReqOpt {
+	if len(roles) == 1 {
+		return client.WithFilter(fmt.Sprintf("siteRole:eq:%s", roles[0]))
+	}
+
+	return client.WithFilter(fmt.Sprintf("siteRole:in:[%s]", strings.Join(roles, ",")))
 }

@@ -3,7 +3,6 @@ package connector
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -63,7 +62,7 @@ func (l *licenseBuilder) List(_ context.Context, _ *v2.ResourceId, _ *pagination
 	for _, license := range licenses {
 		sr, err := licenseResource(license)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, "", nil, fmt.Errorf("failed to create license resource %s: %w", license, err)
 		}
 		rv = append(rv, sr)
 	}
@@ -88,22 +87,30 @@ func (l *licenseBuilder) StaticEntitlements(_ context.Context, _ *pagination.Tok
 }
 
 func (l *licenseBuilder) Grants(ctx context.Context, resource *v2.Resource, pToken *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
-	users, nextToken, _, err := l.client.GetUsers(ctx, pToken.Token)
+	allRoles := RolesPerLicense[resource.DisplayName]
+	if len(allRoles) == 0 {
+		return nil, "", nil, nil
+	}
+
+	filterable := filterableRoles(allRoles)
+	if len(filterable) == 0 {
+		return nil, "", nil, nil
+	}
+
+	users, nextToken, _, err := l.client.GetUsers(ctx, pToken.Token, siteRoleFilter(filterable))
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to list users: %w", err)
+		return nil, "", nil, fmt.Errorf("failed to list users for license %s: %w", resource.DisplayName, err)
 	}
 
 	var rv []*v2.Grant
 	for _, user := range users {
 		userResource, err := userResource(&user, resource.Id)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, "", nil, fmt.Errorf("failed to build user resource for %s: %w", user.ID, err)
 		}
 
-		if slices.Contains(RolesPerLicense[resource.DisplayName], user.SiteRole) {
-			gr := grant.NewGrant(resource, memberEntitlement, userResource.Id)
-			rv = append(rv, gr)
-		}
+		gr := grant.NewGrant(resource, memberEntitlement, userResource.Id)
+		rv = append(rv, gr)
 	}
 
 	return rv, nextToken, nil, nil

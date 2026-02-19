@@ -2,6 +2,7 @@ package connector
 
 import (
 	"context"
+	"fmt"
 	"io"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -33,7 +34,7 @@ func (c *Connector) Asset(ctx context.Context, asset *v2.AssetRef) (string, io.R
 func New(ctx context.Context, serverPath, siteID, accessTokenName, accessTokenSecret, apiVersion string) (*Connector, error) {
 	tableauClient, err := client.New(ctx, serverPath, siteID, accessTokenName, accessTokenSecret, apiVersion)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create client: %w", err)
 	}
 
 	return &Connector{client: tableauClient}, nil
