@@ -36,7 +36,7 @@ func BuildBaseURL(serverPath, apiVersion string) (string, error) {
 		apiVersion = DefaultAPIVersion
 	}
 	if !strings.Contains(serverPath, "://") {
-		serverPath = "https://" + serverPath
+		serverPath = fmt.Sprintf("https://%s", serverPath)
 	}
 	base, err := url.Parse(serverPath)
 	if err != nil {
