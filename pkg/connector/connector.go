@@ -2,88 +2,53 @@ package connector
 
 import (
 	"context"
-	"fmt"
+	"io"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
-	"github.com/conductorone/baton-sdk/pkg/uhttp"
-	"github.com/conductorone/baton-tableau/pkg/tableau"
-	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"github.com/conductorone/baton-tableau/pkg/client"
 )
 
-var (
-	resourceTypeSite = &v2.ResourceType{
-		Id:          "site",
-		DisplayName: "Site",
-	}
-	resourceTypeUser = &v2.ResourceType{
-		Id:          "user",
-		DisplayName: "User",
-		Traits: []v2.ResourceType_Trait{
-			v2.ResourceType_TRAIT_USER,
-		},
-		Annotations: annotationsForUserResourceType(),
-	}
-	resourceTypeGroup = &v2.ResourceType{
-		Id:          "group",
-		DisplayName: "Group",
-		Traits: []v2.ResourceType_Trait{
-			v2.ResourceType_TRAIT_GROUP,
-		},
-	}
-	resourceTypeLicense = &v2.ResourceType{
-		Id:          "license",
-		DisplayName: "License",
-		Traits: []v2.ResourceType_Trait{
-			v2.ResourceType_TRAIT_ROLE,
-		},
-	}
-)
-
-type Tableau struct {
-	client                    *tableau.Client
-	personalAccessTokenName   string
-	personalAccessTokenSecret string
-	contentUrl                string
-	baseUrl                   string
+type Connector struct {
+	client *client.Client
 }
 
-func New(ctx context.Context, baseUrl string, contentUrl string, personalAccessTokenName string, personalAccessTokenSecret string) (*Tableau, error) {
-	httpClient, err := uhttp.NewClient(ctx, uhttp.WithLogger(true, ctxzap.Extract(ctx)))
+func (c *Connector) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncer {
+	return []connectorbuilder.ResourceSyncer{
+		newUserBuilder(c.client),
+		newSiteBuilder(c.client),
+		newGroupBuilder(c.client),
+		newLicenseBuilder(c.client),
+		newProjectBuilder(c.client),
+		newWorkbookBuilder(c.client),
+		newViewBuilder(c.client),
+	}
+}
+
+func (c *Connector) Asset(ctx context.Context, asset *v2.AssetRef) (string, io.ReadCloser, error) {
+	return "", nil, nil
+}
+
+func New(ctx context.Context, serverPath, siteID, accessTokenName, accessTokenSecret, apiVersion string) (*Connector, error) {
+	tableauClient, err := client.New(ctx, serverPath, siteID, accessTokenName, accessTokenSecret, apiVersion)
 	if err != nil {
 		return nil, err
 	}
 
-	credentials, err := tableau.Login(ctx, baseUrl, contentUrl, personalAccessTokenSecret, personalAccessTokenName)
-	if err != nil {
-		return nil, fmt.Errorf("tableau-connector: failed to login: %w", err)
-	}
-
-	baseHttpClient, err := uhttp.NewBaseHttpClientWithContext(ctx, httpClient)
-	if err != nil {
-		return nil, fmt.Errorf("tableau-connector: failed to create base http client: %w", err)
-	}
-
-	return &Tableau{
-		client:                    tableau.NewClient(credentials.Token, credentials.Site.ID, baseUrl, credentials.User.ID, baseHttpClient),
-		personalAccessTokenName:   personalAccessTokenName,
-		personalAccessTokenSecret: personalAccessTokenSecret,
-		contentUrl:                contentUrl,
-		baseUrl:                   baseUrl,
-	}, nil
+	return &Connector{client: tableauClient}, nil
 }
 
-func (tb *Tableau) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) {
+func (c *Connector) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) {
 	return &v2.ConnectorMetadata{
 		DisplayName: "Tableau",
-		Description: "Connector syncing users, groups and sites from Tableau to Baton.",
+		Description: "Connector syncing users, groups, sites, licenses, projects, workbooks, and views from Tableau to Baton.",
 		AccountCreationSchema: &v2.ConnectorAccountCreationSchema{
 			FieldMap: map[string]*v2.ConnectorAccountCreationSchema_Field{
 				"email": {
 					DisplayName: "Email",
-					Required:    false,
-					Description: "The email address of the user. Tableau cloud only",
+					Required:    true,
+					Description: "The email address of the user.",
 					Field: &v2.ConnectorAccountCreationSchema_Field_StringField{
 						StringField: &v2.ConnectorAccountCreationSchema_StringField{},
 					},
@@ -128,20 +93,6 @@ func (tb *Tableau) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) 
 	}, nil
 }
 
-func (tb *Tableau) Validate(ctx context.Context) (annotations.Annotations, error) {
-	err := tb.client.VerifyUser(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("tableau-connector: failed to authorize current user: %w", err)
-	}
-
+func (c *Connector) Validate(ctx context.Context) (annotations.Annotations, error) {
 	return nil, nil
-}
-
-func (tb *Tableau) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncer {
-	return []connectorbuilder.ResourceSyncer{
-		userBuilder(tb.client),
-		siteBuilder(tb.client),
-		groupBuilder(tb.client),
-		licenseBuilder(tb.client),
-	}
 }
