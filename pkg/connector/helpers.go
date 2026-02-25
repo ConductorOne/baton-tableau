@@ -19,6 +19,17 @@ import (
 const (
 	memberEntitlement = "member"
 	allowMode         = "Allow"
+
+	Read               = "Read"
+	Write              = "Write"
+	Filter             = "Filter"
+	ViewComments       = "ViewComments"
+	AddComment         = "AddComment"
+	ExportImage        = "ExportImage"
+	ExportData         = "ExportData"
+	ShareView          = "ShareView"
+	ViewUnderlyingData = "ViewUnderlyingData"
+	WebAuthoring       = "WebAuthoring"
 )
 
 // parseEntitlementSlug extracts the slug (last segment) from an entitlement ID.
@@ -31,9 +42,9 @@ func parseEntitlementSlug(entitlementID string) (string, error) {
 	return parts[2], nil
 }
 
-// permissionEntitlements creates permission entitlements for a resource from a capabilities map.
-// Keys are sorted to ensure deterministic output order.
-func permissionEntitlements(resource *v2.Resource, capabilities map[string]string, resourceLabel string) []*v2.Entitlement {
+// staticPermissionEntitlements creates static permission entitlements (nil resource)
+// that the SDK applies to every resource of the given type.
+func staticPermissionEntitlements(capabilities map[string]string, resourceLabel string) []*v2.Entitlement {
 	keys := make([]string, 0, len(capabilities))
 	for k := range capabilities {
 		keys = append(keys, k)
@@ -43,19 +54,18 @@ func permissionEntitlements(resource *v2.Resource, capabilities map[string]strin
 	var rv []*v2.Entitlement
 	for _, capabilityName := range keys {
 		displayName := capabilities[capabilityName]
-		permissionOptions := []ent.EntitlementOption{
+		entitlement := ent.NewPermissionEntitlement(nil, capabilityName,
 			ent.WithGrantableTo(resourceTypeUser, resourceTypeGroup),
-			ent.WithDescription(fmt.Sprintf("%s permission for %s %s", displayName, resource.DisplayName, resourceLabel)),
-			ent.WithDisplayName(fmt.Sprintf("%s permission %s %s", capabilityName, resource.DisplayName, resourceLabel)),
-		}
-		entitlement := ent.NewPermissionEntitlement(resource, capabilityName, permissionOptions...)
+			ent.WithDisplayName(fmt.Sprintf("%s permission %s", capabilityName, resourceLabel)),
+			ent.WithDescription(fmt.Sprintf("%s permission for %s", displayName, resourceLabel)),
+		)
 		rv = append(rv, entitlement)
 	}
 	return rv
 }
 
 // grantsFromCapabilities creates grants from Tableau grantee capabilities.
-func grantsFromCapabilities(resource *v2.Resource, grantees []client.GranteeCapabilities) ([]*v2.Grant, error) {
+func grantsFromCapabilities(resource *v2.Resource, grantees []*client.GranteeCapabilities) ([]*v2.Grant, error) {
 	var rv []*v2.Grant
 	for _, grantee := range grantees {
 		for _, capability := range grantee.Capabilities.Capability {
@@ -92,6 +102,32 @@ func grantsFromCapabilities(resource *v2.Resource, grantees []client.GranteeCapa
 		}
 	}
 	return rv, nil
+}
+
+// filterByCapabilities keeps only grantees whose capabilities match the given
+// validCaps map. Tableau often returns extra capabilities (Delete,
+// ExtractRefresh, RunExplainData, ExportXml) that the connector does not
+// expose as entitlements.
+func filterByCapabilities(permissions []*client.GranteeCapabilities, validCaps map[string]string) []*client.GranteeCapabilities {
+	var result []*client.GranteeCapabilities
+	for _, grantee := range permissions {
+		var valid []*client.Capability
+		for _, cap := range grantee.Capabilities.Capability {
+			if _, ok := validCaps[cap.Name]; ok {
+				valid = append(valid, cap)
+			}
+		}
+		if len(valid) > 0 {
+			result = append(result, &client.GranteeCapabilities{
+				User:  grantee.User,
+				Group: grantee.Group,
+				Capabilities: client.Capabilities{
+					Capability: valid,
+				},
+			})
+		}
+	}
+	return result
 }
 
 // isAlreadyExistsError returns true if the error indicates the resource already exists (HTTP 409).

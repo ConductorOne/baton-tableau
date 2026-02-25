@@ -110,8 +110,9 @@ func (s *siteBuilder) Grants(ctx context.Context, resource *v2.Resource, pToken 
 				zap.String("role_name", user.SiteRole),
 				zap.String("user", user.FullName),
 			)
+			continue
 		}
-		userResource, err := userResource(&user, resource.Id)
+		userResource, err := userResource(user, resource.Id)
 		if err != nil {
 			return nil, "", nil, fmt.Errorf("failed to build user resource for %s: %w", user.ID, err)
 		}

@@ -31,6 +31,8 @@ func (c *Connector) Asset(ctx context.Context, asset *v2.AssetRef) (string, io.R
 	return "", nil, nil
 }
 
+// New creates a Connector with an unauthenticated Tableau client. Authentication
+// happens later in Validate() when the SDK is ready to perform work.
 func New(ctx context.Context, serverPath, siteID, accessTokenName, accessTokenSecret, apiVersion string) (*Connector, error) {
 	tableauClient, err := client.New(ctx, serverPath, siteID, accessTokenName, accessTokenSecret, apiVersion)
 	if err != nil {
@@ -94,6 +96,19 @@ func (c *Connector) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error)
 	}, nil
 }
 
+// Validate authenticates with the Tableau API and verifies the connection by
+// fetching the site details. The SDK calls this once at the start of each sync
+// cycle, making it the right place to perform deferred authentication — only the
+// gRPC subprocess reaches this point, so exactly one Tableau session is created.
 func (c *Connector) Validate(ctx context.Context) (annotations.Annotations, error) {
-	return nil, nil
+	if err := c.client.Authenticate(ctx); err != nil {
+		return nil, fmt.Errorf("failed to authenticate: %w", err)
+	}
+
+	_, annos, err := c.client.GetSite(ctx)
+	if err != nil {
+		return annos, fmt.Errorf("failed to validate connection: %w", err)
+	}
+
+	return annos, nil
 }

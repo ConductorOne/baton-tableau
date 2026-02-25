@@ -106,7 +106,7 @@ type GroupRef struct {
 }
 
 type Capabilities struct {
-	Capability []Capability `json:"capability"`
+	Capability []*Capability `json:"capability"`
 }
 
 type Capability struct {
@@ -137,28 +137,28 @@ type createUserResponse struct {
 type usersResponse struct {
 	Pagination Pagination `json:"pagination"`
 	Users      struct {
-		User []User `json:"user"`
+		User []*User `json:"user"`
 	} `json:"users"`
 }
 
 type groupsResponse struct {
 	Pagination Pagination `json:"pagination"`
 	Groups     struct {
-		Group []Group `json:"group"`
+		Group []*Group `json:"group"`
 	} `json:"groups"`
 }
 
 type projectsResponse struct {
 	Pagination Pagination `json:"pagination"`
 	Projects   struct {
-		Project []Project `json:"project"`
+		Project []*Project `json:"project"`
 	} `json:"projects"`
 }
 
 type workbooksResponse struct {
 	Pagination Pagination `json:"pagination"`
 	Workbooks  struct {
-		Workbook []Workbook `json:"workbook"`
+		Workbook []*Workbook `json:"workbook"`
 	} `json:"workbooks"`
 }
 
@@ -169,19 +169,19 @@ type workbookResponse struct {
 type viewsResponse struct {
 	Pagination Pagination `json:"pagination"`
 	Views      struct {
-		View []View `json:"view"`
+		View []*View `json:"view"`
 	} `json:"views"`
 }
 
 type permissionsResponse struct {
 	Permissions struct {
-		GranteeCapabilities []GranteeCapabilities `json:"granteeCapabilities"`
+		GranteeCapabilities []*GranteeCapabilities `json:"granteeCapabilities"`
 	} `json:"permissions"`
 }
 
 type idpConfigurationsResponse struct {
 	SiteAuthConfigurations struct {
-		SiteAuthConfiguration []IdpConfiguration `json:"siteAuthConfiguration"`
+		SiteAuthConfiguration []*IdpConfiguration `json:"siteAuthConfiguration"`
 	} `json:"siteAuthConfigurations"`
 }
 

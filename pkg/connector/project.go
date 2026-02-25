@@ -60,18 +60,22 @@ func (p *projectBuilder) List(ctx context.Context, parentId *v2.ResourceId, pTok
 
 	var rv []*v2.Resource
 	for _, project := range projects {
-		pr, err := projectResource(&project, parentId)
+		projectResource, err := projectResource(project, parentId)
 		if err != nil {
 			return nil, "", nil, fmt.Errorf("failed to create project resource for %s: %w", project.Name, err)
 		}
-		rv = append(rv, pr)
+		rv = append(rv, projectResource)
 	}
 
 	return rv, nextToken, nil, nil
 }
 
-func (p *projectBuilder) Entitlements(_ context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
-	return permissionEntitlements(resource, projectCapabilities, "Project"), "", nil, nil
+func (p *projectBuilder) Entitlements(_ context.Context, _ *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
+	return nil, "", nil, nil
+}
+
+func (p *projectBuilder) StaticEntitlements(_ context.Context, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
+	return staticPermissionEntitlements(projectCapabilities, "Project"), "", nil, nil
 }
 
 func (p *projectBuilder) Grants(ctx context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
@@ -89,7 +93,8 @@ func (p *projectBuilder) Grants(ctx context.Context, resource *v2.Resource, _ *p
 		return nil, "", nil, nil
 	}
 
-	rv, err := grantsFromCapabilities(resource, permissions)
+	filtered := filterByCapabilities(permissions, projectCapabilities)
+	rv, err := grantsFromCapabilities(resource, filtered)
 	if err != nil {
 		return nil, "", nil, err
 	}

@@ -23,7 +23,7 @@
    — Workbooks (Tableau workbooks with granular permission assignments: Read, Write, Filter, ViewComments, AddComment, ExportImage, ExportData, ShareView, ViewUnderlyingData, WebAuthoring)  
    — Views (individual dashboards/views within workbooks, with the same granular permissions as workbooks minus Write)
 
-   > **Note**: If a workbook has `showTabs=true`, view-level permissions are inherited from the workbook and not synced independently.
+   > **Note**: When a workbook has `showTabs=true`, view-level permissions are **inherited from the workbook**. The connector syncs these inherited grants by reading the parent workbook's permissions and filtering to view-applicable capabilities. Entitlements are always created for views regardless of `showTabs`.
 
 2. **Can the connector provision any resources? If so, which ones?**  
    The connector can provision:  
@@ -37,6 +37,8 @@
    — View permission assignments (grant/revoke view permissions for users and groups, only when parent workbook has `showTabs=false`)
 
    > **Note**: Group-based permission assignments on projects, workbooks, and views are supported. Grant expansion propagates permissions through group memberships.
+
+   > **Important — Connection Validation**: When the connector starts, it validates the connection by calling the Tableau `GetSite` API. If the credentials or server path are invalid, the connector will fail immediately with a clear error message.
 
 ---
 
@@ -55,7 +57,7 @@
    `--access-token-secret` - The secret value of the Personal Access Token ($BATON_ACCESS_TOKEN_SECRET)  
    `--server-path` - Base URL of your Tableau instance, without the `/api/<version>` suffix (e.g., `https://us-east-1.online.tableau.com`)  
    `--site-id` - The content URL / site ID (e.g., `mycompany`)  
-   `--api-version` - Optional API version override, defaults to `3.27` ($BATON_API_VERSION)
+   `--api-version` - Tableau REST API version, defaults to `3.27`. Can be changed to match your server's supported version — see [API version reference](https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_versions.htm) ($BATON_API_VERSION)
 
 2. **For each item in the list above:**
 
@@ -128,12 +130,19 @@
 - **Provisioning**:
   - Create new users with email, site role, and authentication method (SAML IDP or TableauIDWithMFA)
   - Delete users (remove from site)
-- **Profile attributes**:
+- **Account creation schema** (fields sent in the `--create-account-profile` JSON):
+  - `email` **(required)** — The email address of the user. This is used as the user's login name in the Tableau API. This field was changed from optional to required because the Tableau API requires it for user creation.
+  - `siteRole` **(required)** — The site role to assign. Valid values: `Creator`, `Explorer`, `ExplorerCanPublish`, `SiteAdministratorExplorer`, `SiteAdministratorCreator`, `Unlicensed`, `Viewer`.
+  - `withMFA` (optional, default: `false`) — If `true`, creates the user with `TableauIDWithMFA` authentication (Tableau's built-in MFA). If `false`, the connector will auto-select a SAML IDP configuration.
+  - `idpConfigurationName` (optional) — The name of a specific SAML IDP configuration to use. Only needed when multiple SAML IDPs are configured on the site. If only one SAML IDP exists, it is selected automatically. If no SAML IDPs exist, set `withMFA=true`.
+- **Profile attributes** (synced from Tableau):
   - `first_name`: First name (parsed from full name)
   - `last_name`: Last name (parsed from full name)
   - `login`: Email address
   - `user_id`: Tableau user ID
   - `auth_setting`: Authentication setting
+
+> **Important — Email is required**: The `email` field is marked as required in the account creation schema. The Tableau API uses email as the user identity (`name` field). Provisioning will fail if email is not provided.
 
 ### Groups
 
@@ -169,7 +178,16 @@
   - Grant: Assign a license to a user by updating their site role
   - Revoke: Remove a license by setting the user's site role to Unlicensed
 
-> **Note**: License assignment is based on site role mapping. For example, the Creator license includes users with the `Creator` and `SiteAdministratorCreator` site roles.
+> **Note**: License assignment is based on site role mapping:
+>
+> | License | Site Roles Included |
+> |---|---|
+> | Creator | `Creator`, `SiteAdministratorCreator` |
+> | Explorer | `Explorer`, `SiteAdministratorExplorer`, `ExplorerCanPublish`, `ReadOnly`, `SiteAdministrator` |
+> | Viewer | `Viewer` |
+> | Unlicensed | `Unlicensed` |
+>
+> The `ReadOnly` and `SiteAdministrator` roles are legacy Tableau Server roles that map to the Explorer license. These roles cannot be used with the Tableau REST API filter endpoint, so the connector fetches all users and filters client-side when processing Explorer license grants.
 
 > **Important — License Revoke Constraints**: Revoking a license (setting a user to "Unlicensed") will fail if the user belongs to a group with "Grant role on sign in" configured. Tableau enforces that a user's site role cannot be lower than the minimum site role required by any group they belong to. The error message from Tableau will be: *"Site role of link user that belongs to license upon login cannot be lower than minimum site role of group"*. To resolve this, remove the user from the constraining group first, then revoke the license.
 
@@ -206,17 +224,102 @@
 
 ### Views
 
-- **Description**: Individual dashboards/views within workbooks
+- **Description**: Individual dashboards/views within workbooks. Each view belongs to exactly one workbook, and the workbook's `showTabs` setting determines how permissions work.
 - **Entitlements** (9 permissions — same as workbook minus Write):
   - `Read`, `Filter`, `ViewComments`, `AddComment`, `ExportImage`, `ExportData`, `ShareView`, `ViewUnderlyingData`, `WebAuthoring`
 - **Provisioning** (users and groups):
   - Grant: Assign permissions on a view (only when parent workbook has `showTabs=false`)
   - Revoke: Remove permissions from a view (only when parent workbook has `showTabs=false`)
 
+> **Note — Views in Personal Space are not synced**: The connector lists views via workbooks, which are listed under projects. Workbooks in a user's Personal Space (not under any project) are not synced, and therefore their views are not synced either. This is expected — Personal Space is each user's private area.
+
 > **Important — showTabs and View Permissions**:
-> - When a workbook has `showTabs=true`, all views in the workbook **inherit** the workbook's permissions.
-> - In this case, view-level permissions cannot be set, granted, or revoked independently.
-> - The connector automatically detects this and skips view entitlements/grants for workbooks with `showTabs=true`.
+>
+> The `showTabs` property on a workbook controls whether views (sheets/dashboards) have independent permissions or inherit from the workbook. This is a Tableau concept called **"Tabbed Views"**.
+>
+> **`showTabs=true` (Tabbed Views ON):**
+> - Navigation tabs are shown at the top of each view in the workbook, allowing the user to navigate between all views.
+> - All views **inherit** the workbook's permissions. Any changes to workbook permissions automatically apply to all views.
+> - View-level permissions **cannot be set, granted, or revoked independently**.
+> - In the Tableau UI: opening a view's **Permissions** dialog (Actions menu `...` > Permissions) shows the permissions as **read-only**, with a message that they are inherited from the workbook.
+> - The connector syncs these inherited grants by reading the parent workbook's permissions and filtering to view-applicable capabilities (all except `Write`).
+> - Grant/Revoke operations on views are blocked with a descriptive error.
+>
+> **`showTabs=false` (Tabbed Views OFF):**
+> - Navigation tabs are hidden. Each view is accessed individually (e.g. via direct link or the list in the project).
+> - Views **start with the workbook's permissions at publication time**, but are independent thereafter.
+> - Subsequent changes to workbook permissions **are NOT inherited** by views — each view must be managed individually.
+> - In the Tableau UI: opening a view's **Permissions** dialog shows fully editable permissions, independent from the workbook.
+> - The connector reads permissions directly from each view via the View Permissions API. Grant/Revoke operations work normally.
+>
+> **Three conditions must be met for independent view permissions** (per [Tableau documentation](https://help.tableau.com/current/online/en-us/permissions.htm)):
+> 1. The workbook must be published.
+> 2. The workbook must be in a **customizable** project (not locked).
+> 3. The workbook must have `showTabs=false` (tabbed views hidden).
+>
+> **How to check and toggle showTabs in the Tableau UI:**
+> 1. Navigate to the workbook in Tableau Cloud (Explore > Project > Workbook).
+> 2. Open the **Actions menu (...)** for the workbook.
+> 3. Select **Tabbed Views** > **Show Tabs** or **Hide Tabs**.
+> 4. To verify the current state: if you see navigation tabs along the top of the views, `showTabs=true`. If each view stands alone with no tab bar, `showTabs=false`.
+> 5. You can also verify via the REST API — the `showTabs` field in the workbook response is `"true"` or `"false"`.
+>
+> **How to see views in the Tableau UI:**
+> - **From a workbook**: Click on a workbook to see all its views. With `showTabs=true`, views appear as tabs at the top.
+> - **Global view list**: Go to Explore > change the content type filter dropdown to **All Views** to see all views across the site.
+> - **View permissions**: Navigate to a specific view > Actions menu `...` > Permissions. With `showTabs=true` the dialog is read-only (inherited). With `showTabs=false` the dialog is editable.
+>
+> **Warning:** Toggling `showTabs` changes the permission model:
+> - Switching to **Show Tabs** overrides any existing view-level permissions and reinstates workbook-level permissions for all views.
+> - Switching to **Hide Tabs** breaks the relationship between the workbook and its views — permissions diverge from that point on.
+>
+> Entitlements are always created for all views regardless of `showTabs`, so the permission model is visible in both cases.
+>
+> **Reference:** [Tableau Permissions Documentation — Show or Hide Sheet Tabs](https://help.tableau.com/current/online/en-us/permissions.htm)
+
+---
+
+## Important Notes for QA / Validation
+
+### Account Creation (User Provisioning)
+
+- **Email is now required** (`Required: true`). Previously it was optional. Customers who have automated user creation without providing an email will see provisioning failures. This change is correct because the Tableau API requires it.
+- When `withMFA=false` (default), the connector auto-selects a SAML IDP. If multiple SAML IDPs are configured, the user must specify `idpConfigurationName` or the request will fail with a list of available IDPs.
+- When `withMFA=true`, the user is created with `TableauIDWithMFA` authentication — no IDP lookup is needed.
+
+### Site Role Grants
+
+- Users with unknown or unexpected site roles (not in the connector's role map) are **skipped** during site grant sync instead of creating malformed grants. A warning is logged.
+- The role map covers: `SiteAdministrator`, `SiteAdministratorCreator`, `SiteAdministratorExplorer`, `ServerAdministrator`, `Creator`, `Explorer`, `ExplorerCanPublish`, `Viewer`, `Unlicensed`, `ReadOnly`.
+
+### License Grants
+
+- The Explorer license includes `ReadOnly` and `SiteAdministrator` roles (legacy Tableau Server roles). These roles are not supported by the Tableau API's `siteRole` filter, so the connector falls back to fetching all users and filtering client-side for the Explorer license.
+- For Creator, Viewer, and Unlicensed licenses, server-side filtering is used for efficiency.
+
+### View Grants and showTabs
+
+- **showTabs=true** (Tabbed Views ON): Views inherit permissions from the parent workbook. The connector syncs these inherited grants by fetching workbook permissions and filtering to view-applicable capabilities. Grant/Revoke operations on individual views are **blocked** with a descriptive error.
+- **showTabs=false** (Tabbed Views OFF): Views have their own independent permissions. Grant/Revoke operations work normally.
+- Toggling `showTabs` in Tableau UI changes the permission model — **Show Tabs** resets all views to workbook permissions; **Hide Tabs** makes them independent.
+- The workbook must be in a **customizable project** (not locked) for independent view permissions to work.
+- **Views in Personal Space are not synced**: Workbooks in a user's Personal Space are not under any project, so neither the workbook nor its views are discovered during sync. This is expected.
+- **How to verify in Tableau UI**: Open a view > Actions menu `...` > Permissions. If `showTabs=true`, the permissions dialog is read-only (inherited from workbook). If `showTabs=false`, the dialog is fully editable.
+- Reference: [Tableau Permissions — Show or Hide Sheet Tabs](https://help.tableau.com/current/online/en-us/permissions.htm)
+
+### Group Membership
+
+- The **"All Users"** group is managed by Tableau automatically. Grant/Revoke on this group are handled gracefully (Grant returns `GrantAlreadyExists`, Revoke returns an error explaining the group cannot be modified).
+- **ServerAdministrator** users are skipped in group membership sync — they are server-level admins, not site-scoped users.
+
+### Idempotency
+
+- **Grant "already exists"**: Returns success with `GrantAlreadyExists` annotation (not an error).
+- **Revoke "not found"**: Returns success with `GrantAlreadyRevoked` annotation (not an error).
+
+### Connection Validation
+
+- The connector validates the connection on startup by calling `GetSite()`. Invalid credentials or unreachable servers fail immediately.
 
 ---
 
@@ -227,7 +330,8 @@ This connector uses the Tableau REST API for all operations.
 **Documentation:**
 - REST API Reference: https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api.htm
 - Authentication: https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_auth.htm
-- Permissions: https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_permissions.htm
+- REST API Permissions: https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_permissions.htm
+- Tableau Cloud Permissions (UI, showTabs, capabilities): https://help.tableau.com/current/online/en-us/permissions.htm
 
 **Pagination:**
 - Uses `pageSize` and `pageNumber` query parameters (1-based page numbering, default page size: 100)

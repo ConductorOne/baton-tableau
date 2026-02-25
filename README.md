@@ -65,11 +65,14 @@ baton resources
 
 ## Important Notes
 
-- **showTabs**: When a workbook has `showTabs=true`, view-level permissions are inherited from the workbook and cannot be modified independently.
+- **Connection validation**: The connector validates credentials on startup by calling `GetSite()`. Invalid credentials or unreachable servers fail immediately with a clear error.
+- **showTabs**: When a workbook has `showTabs=true`, view-level permissions are inherited from the workbook and cannot be modified independently. Grant/Revoke on those views are blocked with a descriptive error.
+- **Views in Personal Space**: Workbooks in a user's Personal Space (not under any project) are not synced, and therefore their views are not synced either.
 - **Server Administrators**: Users with `ServerAdministrator` site role are skipped during group membership sync (server-level admins are not site-scoped).
 - **Grant expansion**: Group-based permissions on projects, workbooks, and views are supported. When a group has a permission, all members inherit it.
 - **"All Users" group**: Tableau automatically adds every user to the built-in "All Users" group. This group cannot be modified via the API — Grant and Revoke operations on it are not supported. The connector syncs its membership to show each user's base site role.
 - **License revoke constraints**: Revoking a license (setting a user to "Unlicensed") will fail if the user belongs to a group with a "Grant role on sign in" minimum site role. Remove the user from the constraining group first, then revoke the license.
+- **Idempotency**: Granting a permission that already exists returns success (not an error). Revoking a permission that is already removed also returns success.
 
 # Credentials Setup
 
@@ -81,11 +84,32 @@ baton resources
 4. Enter a **Token Name** and click **"Create new token"**
 5. Copy the **Token Secret** immediately — it is displayed only once
 
-> **Important**: The user account must have **Site Administrator Explorer** or **Site Administrator Creator** role. PAT creation must be enabled by a site administrator.
+> **Important**: The user account must have **Site Administrator Explorer** (read-only sync) or **Site Administrator Creator** (sync + provisioning) role. PAT creation must be enabled by a site administrator.
 
 **Documentation:**
 - Tableau Cloud: https://help.tableau.com/current/online/en-us/security_personal_access_tokens.htm
 - Tableau Server: https://help.tableau.com/current/server/en-us/security_personal_access_tokens.htm
+
+## Configuration Flags
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--access-token-name` | Yes | Name of the Personal Access Token |
+| `--access-token-secret` | Yes | Secret value of the Personal Access Token |
+| `--server-path` | Yes | Base URL **without** `/api/<version>` suffix. Examples: `us-east-1.online.tableau.com` (Cloud), `your-server-hostname` (Server) |
+| `--site-id` | No | Content URL of the site (e.g., `mycompany`). Can be found after `/site/` in the browser URL. Leave empty for the default site on Tableau Server |
+| `--api-version` | No | Tableau REST API version (default: `3.27`). Can be changed to match your server's supported version — see [API version reference](https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_versions.htm) |
+
+## Account Creation Schema
+
+When creating users via provisioning, the `--create-account-profile` JSON accepts:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `email` | Yes | Email address used as the user's login name |
+| `siteRole` | Yes | Site role: `Creator`, `Explorer`, `ExplorerCanPublish`, `SiteAdministratorExplorer`, `SiteAdministratorCreator`, `Viewer`, `Unlicensed` |
+| `withMFA` | No | If `true`, creates user with `TableauIDWithMFA` authentication. Default: `false` (uses SAML IDP) |
+| `idpConfigurationName` | No | Name of a specific SAML IDP when multiple are configured. Auto-selected if only one exists |
 
 # Contributing, Support and Issues
 
@@ -110,7 +134,7 @@ Available Commands:
 Flags:
       --access-token-name string     required: Access token name used to connect to the Tableau API ($BATON_ACCESS_TOKEN_NAME)
       --access-token-secret string   required: Access token secret used to connect to the Tableau API ($BATON_ACCESS_TOKEN_SECRET)
-      --api-version string           API version of your Tableau Server or Tableau Cloud instance ($BATON_API_VERSION)
+      --api-version string           API version of your Tableau Server or Tableau Cloud instance ($BATON_API_VERSION) (default "3.27")
       --client-id string             The client ID used to authenticate with ConductorOne ($BATON_CLIENT_ID)
       --client-secret string         The client secret used to authenticate with ConductorOne ($BATON_CLIENT_SECRET)
   -f, --file string                  The path to the c1z file to sync with ($BATON_FILE) (default "sync.c1z")

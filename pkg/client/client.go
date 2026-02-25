@@ -73,15 +73,26 @@ import (
 // =============================================================================
 
 // Client is an HTTP client for the Tableau REST API.
+// Authentication is deferred until Authenticate() is called explicitly.
+// The Baton SDK spawns the connector in two processes (main + gRPC subprocess),
+// so logging in during New() would create two Tableau sessions from the same PAT,
+// causing session conflicts on Tableau Cloud.
 type Client struct {
-	httpClient *uhttp.BaseHttpClient
-	authToken  string
-	siteId     string
-	baseUrl    string
+	httpClient        *uhttp.BaseHttpClient
+	authToken         string
+	siteId            string
+	baseUrl           string
+	contentUrl        string
+	accessTokenName   string
+	accessTokenSecret string
 }
 
-// New creates a fully initialized Tableau API client: builds the base URL,
-// sets up HTTP transport, authenticates, and returns a ready-to-use client.
+// New creates a Tableau API client without authenticating. It builds the base URL
+// from serverPath and apiVersion, initializes the HTTP transport, and stores the
+// PAT credentials for later use. Authentication is intentionally deferred to
+// Authenticate() to avoid creating duplicate Tableau sessions — the Baton SDK
+// instantiates the connector twice (main process + gRPC subprocess), but only
+// the subprocess needs an active session.
 func New(ctx context.Context, serverPath, siteID, accessTokenName, accessTokenSecret, apiVersion string) (*Client, error) {
 	baseURL, err := BuildBaseURL(serverPath, apiVersion)
 	if err != nil {
@@ -98,17 +109,30 @@ func New(ctx context.Context, serverPath, siteID, accessTokenName, accessTokenSe
 		return nil, fmt.Errorf("failed to create base http client: %w", err)
 	}
 
-	credentials, err := Login(ctx, baseHttpClient, baseURL, siteID, accessTokenSecret, accessTokenName)
+	return &Client{
+		httpClient:        baseHttpClient,
+		baseUrl:           baseURL,
+		contentUrl:        siteID,
+		accessTokenName:   accessTokenName,
+		accessTokenSecret: accessTokenSecret,
+	}, nil
+}
+
+// Authenticate signs in to the Tableau REST API using the stored PAT credentials
+// and populates the auth token and site ID needed for subsequent API calls.
+// This is called from Connector.Validate(), which the SDK invokes once per sync
+// cycle before any resource operations. If already authenticated, calling this
+// again will replace the existing session with a new one.
+func (c *Client) Authenticate(ctx context.Context) error {
+	credentials, err := Login(ctx, c.httpClient, c.baseUrl, c.contentUrl, c.accessTokenSecret, c.accessTokenName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to login: %w", err)
+		return fmt.Errorf("failed to login: %w", err)
 	}
 
-	return &Client{
-		httpClient: baseHttpClient,
-		authToken:  credentials.Token,
-		siteId:     credentials.Site.ID,
-		baseUrl:    baseURL,
-	}, nil
+	c.authToken = credentials.Token
+	c.siteId = credentials.Site.ID
+
+	return nil
 }
 
 // =============================================================================
@@ -178,7 +202,7 @@ func (c *Client) GetSite(ctx context.Context) (*Site, annotations.Annotations, e
 // =============================================================================
 
 // GetUsers returns a page of users on the site, optionally filtered by query parameters.
-func (c *Client) GetUsers(ctx context.Context, pageToken string, opts ...ReqOpt) ([]User, string, annotations.Annotations, error) {
+func (c *Client) GetUsers(ctx context.Context, pageToken string, opts ...ReqOpt) ([]*User, string, annotations.Annotations, error) {
 	page := parsePageToken(pageToken)
 
 	urlGetUsers, err := c.buildSiteURL(pathUsers)
@@ -263,7 +287,7 @@ func (c *Client) RemoveUserFromSite(ctx context.Context, userId string) (annotat
 // =============================================================================
 
 // GetGroups returns a page of groups on the site.
-func (c *Client) GetGroups(ctx context.Context, pageToken string) ([]Group, string, annotations.Annotations, error) {
+func (c *Client) GetGroups(ctx context.Context, pageToken string) ([]*Group, string, annotations.Annotations, error) {
 	page := parsePageToken(pageToken)
 
 	urlGetGroups, err := c.buildSiteURL(pathGroups)
@@ -283,7 +307,7 @@ func (c *Client) GetGroups(ctx context.Context, pageToken string) ([]Group, stri
 }
 
 // GetGroupUsers returns a page of users in a group.
-func (c *Client) GetGroupUsers(ctx context.Context, groupId, pageToken string) ([]User, string, annotations.Annotations, error) {
+func (c *Client) GetGroupUsers(ctx context.Context, groupId, pageToken string) ([]*User, string, annotations.Annotations, error) {
 	page := parsePageToken(pageToken)
 
 	urlGetGroupUsers, err := c.buildSiteURL(pathGroups, groupId, pathUsers)
@@ -339,7 +363,7 @@ func (c *Client) RemoveUserFromGroup(ctx context.Context, groupId, userId string
 // =============================================================================
 
 // GetProjects returns a page of projects on the site.
-func (c *Client) GetProjects(ctx context.Context, pageToken string) ([]Project, string, annotations.Annotations, error) {
+func (c *Client) GetProjects(ctx context.Context, pageToken string) ([]*Project, string, annotations.Annotations, error) {
 	page := parsePageToken(pageToken)
 
 	urlGetProjects, err := c.buildSiteURL(pathProjects)
@@ -359,8 +383,8 @@ func (c *Client) GetProjects(ctx context.Context, pageToken string) ([]Project, 
 }
 
 // GetAllProjects returns every project on the site, handling pagination internally.
-func (c *Client) GetAllProjects(ctx context.Context) ([]Project, error) {
-	var all []Project
+func (c *Client) GetAllProjects(ctx context.Context) ([]*Project, error) {
+	var all []*Project
 
 	for pageToken := ""; ; {
 		projects, nextToken, _, err := c.GetProjects(ctx, pageToken)
@@ -380,7 +404,7 @@ func (c *Client) GetAllProjects(ctx context.Context) ([]Project, error) {
 }
 
 // GetProjectPermissions returns permissions for a project.
-func (c *Client) GetProjectPermissions(ctx context.Context, projectID string) ([]GranteeCapabilities, annotations.Annotations, error) {
+func (c *Client) GetProjectPermissions(ctx context.Context, projectID string) ([]*GranteeCapabilities, annotations.Annotations, error) {
 	urlGetProjectPermissions, err := c.buildSiteURL(pathProjects, projectID, pathPermissions)
 	if err != nil {
 		return nil, nil, err
@@ -420,7 +444,7 @@ func (c *Client) DeleteProjectGroupPermission(ctx context.Context, projectID, gr
 // =============================================================================
 
 // GetWorkbooks returns a page of workbooks on the site, optionally filtered by query parameters.
-func (c *Client) GetWorkbooks(ctx context.Context, pageToken string, opts ...ReqOpt) ([]Workbook, string, annotations.Annotations, error) {
+func (c *Client) GetWorkbooks(ctx context.Context, pageToken string, opts ...ReqOpt) ([]*Workbook, string, annotations.Annotations, error) {
 	page := parsePageToken(pageToken)
 
 	urlGetWorkbooks, err := c.buildSiteURL(pathWorkbooks)
@@ -455,8 +479,10 @@ func (c *Client) GetWorkbook(ctx context.Context, workbookID string) (*Workbook,
 	return &res.Workbook, annos, nil
 }
 
-// GetWorkbookViews returns views for a specific workbook.
-func (c *Client) GetWorkbookViews(ctx context.Context, workbookID string) ([]View, annotations.Annotations, error) {
+// GetWorkbookViews returns views for a specific workbook. This endpoint does not
+// support pagination — it returns all views in a single response without a
+// pagination object, so no page handling is needed.
+func (c *Client) GetWorkbookViews(ctx context.Context, workbookID string) ([]*View, annotations.Annotations, error) {
 	urlGetWorkbookViews, err := c.buildSiteURL(pathWorkbooks, workbookID, pathViews)
 	if err != nil {
 		return nil, nil, err
@@ -472,7 +498,7 @@ func (c *Client) GetWorkbookViews(ctx context.Context, workbookID string) ([]Vie
 }
 
 // GetWorkbookPermissions returns permissions for a workbook.
-func (c *Client) GetWorkbookPermissions(ctx context.Context, workbookID string) ([]GranteeCapabilities, annotations.Annotations, error) {
+func (c *Client) GetWorkbookPermissions(ctx context.Context, workbookID string) ([]*GranteeCapabilities, annotations.Annotations, error) {
 	urlGetWorkbookPermissions, err := c.buildSiteURL(pathWorkbooks, workbookID, pathPermissions)
 	if err != nil {
 		return nil, nil, err
@@ -512,7 +538,7 @@ func (c *Client) DeleteWorkbookGroupPermission(ctx context.Context, workbookID, 
 // =============================================================================
 
 // GetViewPermissions returns permissions for a view.
-func (c *Client) GetViewPermissions(ctx context.Context, viewID string) ([]GranteeCapabilities, annotations.Annotations, error) {
+func (c *Client) GetViewPermissions(ctx context.Context, viewID string) ([]*GranteeCapabilities, annotations.Annotations, error) {
 	urlGetViewPermissions, err := c.buildSiteURL(pathViews, viewID, pathPermissions)
 	if err != nil {
 		return nil, nil, err
@@ -552,7 +578,7 @@ func (c *Client) DeleteViewGroupPermission(ctx context.Context, viewID, groupID,
 // =============================================================================
 
 // ListIdpConfigurations returns IDP configurations for the site.
-func (c *Client) ListIdpConfigurations(ctx context.Context) ([]IdpConfiguration, annotations.Annotations, error) {
+func (c *Client) ListIdpConfigurations(ctx context.Context) ([]*IdpConfiguration, annotations.Annotations, error) {
 	urlListIdpConfigurations, err := c.buildSiteURL(pathIdpConfigurations)
 	if err != nil {
 		return nil, nil, err
@@ -570,13 +596,13 @@ func (c *Client) ListIdpConfigurations(ctx context.Context) ([]IdpConfiguration,
 // ListEnabledIdpConfigurations returns only enabled SAML/OIDC IDP configurations.
 // The Tableau API does not support server-side filtering, so this lists all
 // configurations and filters client-side.
-func (c *Client) ListEnabledIdpConfigurations(ctx context.Context) ([]IdpConfiguration, annotations.Annotations, error) {
+func (c *Client) ListEnabledIdpConfigurations(ctx context.Context) ([]*IdpConfiguration, annotations.Annotations, error) {
 	configs, annos, err := c.ListIdpConfigurations(ctx)
 	if err != nil {
 		return nil, annos, err
 	}
 
-	var enabled []IdpConfiguration
+	var enabled []*IdpConfiguration
 	for _, cfg := range configs {
 		if cfg.Enabled && isAllowedAuthSetting(cfg.AuthSetting) {
 			enabled = append(enabled, cfg)
@@ -595,9 +621,9 @@ func (c *Client) FindIdpConfigurationByName(ctx context.Context, name string) (*
 	}
 
 	lowerName := strings.ToLower(name)
-	for i := range configs {
-		if strings.ToLower(configs[i].IdpConfigurationName) == lowerName {
-			return &configs[i], annos, nil
+	for _, cfg := range configs {
+		if strings.ToLower(cfg.IdpConfigurationName) == lowerName {
+			return cfg, annos, nil
 		}
 	}
 

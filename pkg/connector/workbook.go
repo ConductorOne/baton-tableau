@@ -13,30 +13,17 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	workbookRead               = "Read"
-	workbookWrite              = "Write"
-	workbookFilter             = "Filter"
-	workbookViewComments       = "ViewComments"
-	workbookAddComment         = "AddComment"
-	workbookExportImage        = "ExportImage"
-	workbookExportData         = "ExportData"
-	workbookShareView          = "ShareView"
-	workbookViewUnderlyingData = "ViewUnderlyingData"
-	workbookWebAuthoring       = "WebAuthoring"
-)
-
 var workbookCapabilities = map[string]string{
-	workbookRead:               "read",
-	workbookWrite:              "write",
-	workbookFilter:             "filter",
-	workbookViewComments:       "view comments",
-	workbookAddComment:         "add comment",
-	workbookExportImage:        "export image",
-	workbookExportData:         "export data",
-	workbookShareView:          "share view",
-	workbookViewUnderlyingData: "view underlying data",
-	workbookWebAuthoring:       "web authoring",
+	Read:               "read",
+	Write:              "write",
+	Filter:             "filter",
+	ViewComments:       "view comments",
+	AddComment:         "add comment",
+	ExportImage:        "export image",
+	ExportData:         "export data",
+	ShareView:          "share view",
+	ViewUnderlyingData: "view underlying data",
+	WebAuthoring:       "web authoring",
 }
 
 type workbookBuilder struct {
@@ -87,11 +74,11 @@ func (w *workbookBuilder) List(ctx context.Context, parentId *v2.ResourceId, pTo
 
 	var rv []*v2.Resource
 	for _, workbook := range workbooks {
-		wr, err := workbookResource(&workbook, parentId)
+		workbookResource, err := workbookResource(workbook, parentId)
 		if err != nil {
 			return nil, "", nil, fmt.Errorf("failed to create workbook resource for %s: %w", workbook.Name, err)
 		}
-		rv = append(rv, wr)
+		rv = append(rv, workbookResource)
 	}
 
 	return rv, nextToken, nil, nil
@@ -115,8 +102,12 @@ func (w *workbookBuilder) resolveProjectName(ctx context.Context, projectID stri
 	return w.projectNames[projectID], nil
 }
 
-func (w *workbookBuilder) Entitlements(_ context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
-	return permissionEntitlements(resource, workbookCapabilities, "Workbook"), "", nil, nil
+func (w *workbookBuilder) Entitlements(_ context.Context, _ *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
+	return nil, "", nil, nil
+}
+
+func (w *workbookBuilder) StaticEntitlements(_ context.Context, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
+	return staticPermissionEntitlements(workbookCapabilities, "Workbook"), "", nil, nil
 }
 
 func (w *workbookBuilder) Grants(ctx context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
@@ -134,7 +125,8 @@ func (w *workbookBuilder) Grants(ctx context.Context, resource *v2.Resource, _ *
 		return nil, "", nil, nil
 	}
 
-	rv, err := grantsFromCapabilities(resource, permissions)
+	filtered := filterByCapabilities(permissions, workbookCapabilities)
+	rv, err := grantsFromCapabilities(resource, filtered)
 	if err != nil {
 		return nil, "", nil, err
 	}
