@@ -13,28 +13,16 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	viewRead               = "Read"
-	viewFilter             = "Filter"
-	viewViewComments       = "ViewComments"
-	viewAddComment         = "AddComment"
-	viewExportImage        = "ExportImage"
-	viewExportData         = "ExportData"
-	viewShareView          = "ShareView"
-	viewViewUnderlyingData = "ViewUnderlyingData"
-	viewWebAuthoring       = "WebAuthoring"
-)
-
 var viewCapabilities = map[string]string{
-	viewRead:               "view",
-	viewFilter:             "filter",
-	viewViewComments:       "view comments",
-	viewAddComment:         "add comment",
-	viewExportImage:        "export image",
-	viewExportData:         "export data",
-	viewShareView:          "share view",
-	viewViewUnderlyingData: "view underlying data",
-	viewWebAuthoring:       "web authoring",
+	Read:               "view",
+	Filter:             "filter",
+	ViewComments:       "view comments",
+	AddComment:         "add comment",
+	ExportImage:        "export image",
+	ExportData:         "export data",
+	ShareView:          "share view",
+	ViewUnderlyingData: "view underlying data",
+	WebAuthoring:       "web authoring",
 }
 
 type viewBuilder struct {
@@ -84,28 +72,22 @@ func (v *viewBuilder) List(ctx context.Context, parentId *v2.ResourceId, _ *pagi
 
 	var rv []*v2.Resource
 	for _, view := range views {
-		vr, err := viewResource(&view, parentId)
+		viewResource, err := viewResource(view, parentId)
 		if err != nil {
 			return nil, "", nil, fmt.Errorf("failed to create view resource for %s: %w", view.Name, err)
 		}
-		rv = append(rv, vr)
+		rv = append(rv, viewResource)
 	}
 
 	return rv, "", nil, nil
 }
 
-func (v *viewBuilder) Entitlements(ctx context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
-	if resource.ParentResourceId != nil {
-		showTabs, err := v.getShowTabs(ctx, resource.ParentResourceId.Resource)
-		if err != nil {
-			return nil, "", nil, err
-		}
-		if showTabs {
-			return nil, "", nil, nil
-		}
-	}
+func (v *viewBuilder) Entitlements(_ context.Context, _ *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
+	return nil, "", nil, nil
+}
 
-	return permissionEntitlements(resource, viewCapabilities, "View"), "", nil, nil
+func (v *viewBuilder) StaticEntitlements(_ context.Context, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
+	return staticPermissionEntitlements(viewCapabilities, "View"), "", nil, nil
 }
 
 func (v *viewBuilder) Grants(ctx context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
@@ -117,7 +99,22 @@ func (v *viewBuilder) Grants(ctx context.Context, resource *v2.Resource, _ *pagi
 			return nil, "", nil, err
 		}
 		if showTabs {
-			return nil, "", nil, nil
+			workbookID := resource.ParentResourceId.Resource
+			permissions, _, err := v.client.GetWorkbookPermissions(ctx, workbookID)
+			if err != nil {
+				l.Warn(
+					"failed to get workbook permissions for view inheritance, skipping grants for this view",
+					zap.String("workbook_id", workbookID),
+					zap.String("view_name", resource.DisplayName),
+					zap.Error(err),
+				)
+				return nil, "", nil, nil
+			}
+			rv, err := grantsFromCapabilities(resource, filterByCapabilities(permissions, viewCapabilities))
+			if err != nil {
+				return nil, "", nil, err
+			}
+			return rv, "", nil, nil
 		}
 	}
 
@@ -133,7 +130,7 @@ func (v *viewBuilder) Grants(ctx context.Context, resource *v2.Resource, _ *pagi
 		return nil, "", nil, nil
 	}
 
-	rv, err := grantsFromCapabilities(resource, permissions)
+	rv, err := grantsFromCapabilities(resource, filterByCapabilities(permissions, viewCapabilities))
 	if err != nil {
 		return nil, "", nil, err
 	}

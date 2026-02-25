@@ -37,6 +37,7 @@ var (
 		"api-version",
 		field.WithDisplayName("API Version"),
 		field.WithDescription("API version of your Tableau Server or Tableau Cloud instance"),
+		field.WithDefaultValue("3.27"),
 	)
 
 	ConfigurationFields = []field.SchemaField{

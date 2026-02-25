@@ -102,16 +102,19 @@ func (s *siteBuilder) Grants(ctx context.Context, resource *v2.Resource, pToken 
 		return nil, "", nil, fmt.Errorf("failed to list users: %w", err)
 	}
 
+	l := ctxzap.Extract(ctx)
 	var rv []*v2.Grant
 	for _, user := range users {
 		roleName := roles[user.SiteRole]
 		if roleName == "" {
-			ctxzap.Extract(ctx).Warn("Unknown Tableau Role Name",
-				zap.String("role_name", user.SiteRole),
-				zap.String("user", user.FullName),
+			l.Warn("skipping user with unknown site role",
+				zap.String("site_role", user.SiteRole),
+				zap.String("user_id", user.ID),
+				zap.String("user_name", user.FullName),
 			)
+			continue
 		}
-		userResource, err := userResource(&user, resource.Id)
+		userResource, err := userResource(user, resource.Id)
 		if err != nil {
 			return nil, "", nil, fmt.Errorf("failed to build user resource for %s: %w", user.ID, err)
 		}

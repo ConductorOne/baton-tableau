@@ -92,19 +92,30 @@ func (l *licenseBuilder) Grants(ctx context.Context, resource *v2.Resource, pTok
 		return nil, "", nil, nil
 	}
 
-	filterable := filterableRoles(allRoles)
-	if len(filterable) == 0 {
-		return nil, "", nil, nil
+	roleSet := make(map[string]bool, len(allRoles))
+	for _, r := range allRoles {
+		roleSet[r] = true
 	}
 
-	users, nextToken, _, err := l.client.GetUsers(ctx, pToken.Token, siteRoleFilter(filterable))
+	filterable := filterableRoles(allRoles)
+
+	var opts []client.ReqOpt
+	if len(filterable) == len(allRoles) && len(filterable) > 0 {
+		opts = append(opts, siteRoleFilter(filterable))
+	}
+
+	users, nextToken, _, err := l.client.GetUsers(ctx, pToken.Token, opts...)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("failed to list users for license %s: %w", resource.DisplayName, err)
 	}
 
 	var rv []*v2.Grant
 	for _, user := range users {
-		userResource, err := userResource(&user, resource.Id)
+		if !roleSet[user.SiteRole] {
+			continue
+		}
+
+		userResource, err := userResource(user, resource.Id)
 		if err != nil {
 			return nil, "", nil, fmt.Errorf("failed to build user resource for %s: %w", user.ID, err)
 		}

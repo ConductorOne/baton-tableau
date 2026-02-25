@@ -80,11 +80,11 @@ func (u *userBuilder) List(ctx context.Context, parentId *v2.ResourceId, pToken 
 
 	var rv []*v2.Resource
 	for _, user := range users {
-		ur, err := userResource(&user, parentId)
+		userResource, err := userResource(user, parentId)
 		if err != nil {
 			return nil, "", nil, fmt.Errorf("failed to build user resource for %s: %w", user.ID, err)
 		}
-		rv = append(rv, ur)
+		rv = append(rv, userResource)
 	}
 
 	return rv, nextToken, nil, nil
@@ -211,7 +211,7 @@ func newUserBuilder(client *client.Client) *userBuilder {
 }
 
 // buildAvailableIDPsError formats an actionable error listing the given IDP configurations.
-func buildAvailableIDPsError(configs []client.IdpConfiguration) error {
+func buildAvailableIDPsError(configs []*client.IdpConfiguration) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Please specify idpConfigurationName in the account profile. Available IDPs (%d):\n", len(configs))
 	for _, cfg := range configs {

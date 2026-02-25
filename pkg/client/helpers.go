@@ -30,11 +30,9 @@ const (
 
 // BuildBaseURL constructs the Tableau REST API base URL from a server path and API version.
 // It preserves the scheme if provided (useful for HTTP-based testing), otherwise defaults
-// to HTTPS. The API version defaults to DefaultAPIVersion if empty.
+// to HTTPS. The apiVersion parameter is expected to be non-empty; the caller (config layer)
+// is responsible for providing a default via field.WithDefaultValue.
 func BuildBaseURL(serverPath, apiVersion string) (string, error) {
-	if apiVersion == "" {
-		apiVersion = DefaultAPIVersion
-	}
 	if !strings.Contains(serverPath, "://") {
 		serverPath = fmt.Sprintf("https://%s", serverPath)
 	}

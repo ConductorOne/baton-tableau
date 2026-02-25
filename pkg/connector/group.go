@@ -69,11 +69,11 @@ func (g *groupBuilder) List(ctx context.Context, parentId *v2.ResourceId, pToken
 
 	var rv []*v2.Resource
 	for _, group := range groups {
-		ur, err := groupResource(&group, parentId)
+		groupResource, err := groupResource(group, parentId)
 		if err != nil {
 			return nil, "", nil, fmt.Errorf("failed to build group resource for %s: %w", group.ID, err)
 		}
-		rv = append(rv, ur)
+		rv = append(rv, groupResource)
 	}
 
 	return rv, nextToken, nil, nil
@@ -123,7 +123,7 @@ func (g *groupBuilder) Grants(ctx context.Context, resource *v2.Resource, pToken
 			continue
 		}
 
-		userResource, err := userResource(&user, resource.Id)
+		userResource, err := userResource(user, resource.Id)
 		if err != nil {
 			return nil, "", nil, fmt.Errorf("failed to build user resource for %s: %w", user.ID, err)
 		}
