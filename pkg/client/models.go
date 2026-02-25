@@ -25,7 +25,7 @@ type User struct {
 	Name        string    `json:"name"`
 	SiteRole    string    `json:"siteRole"`
 	AuthSetting string    `json:"authSetting"`
-	LastLogin   time.Time `json:"lastLogin"`
+	LastLogin   *time.Time `json:"lastLogin"`
 }
 
 type CreateUserRequest struct {

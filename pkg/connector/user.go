@@ -50,7 +50,9 @@ func userResource(user *client.User, parentResourceID *v2.ResourceId) (*v2.Resou
 		rs.WithUserProfile(profile),
 		rs.WithStatus(v2.UserTrait_Status_STATUS_ENABLED),
 		rs.WithEmail(user.Email, true),
-		rs.WithLastLogin(user.LastLogin),
+	}
+	if user.LastLogin != nil {
+		userTraitOptions = append(userTraitOptions, rs.WithLastLogin(*user.LastLogin))
 	}
 
 	ret, err := rs.NewUserResource(
