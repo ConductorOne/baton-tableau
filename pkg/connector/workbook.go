@@ -9,26 +9,28 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-tableau/pkg/client"
-	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
-	"go.uber.org/zap"
 )
 
-var workbookCapabilities = map[string]string{
-	Read:               "read",
-	Write:              "write",
-	Filter:             "filter",
-	ViewComments:       "view comments",
-	AddComment:         "add comment",
-	ExportImage:        "export image",
-	ExportData:         "export data",
-	ShareView:          "share view",
-	ViewUnderlyingData: "view underlying data",
-	WebAuthoring:       "web authoring",
-}
+var workbookCapabilities = pickCapabilities(
+	Read,
+	Filter,
+	ViewComments,
+	AddComment,
+	ExportImage,
+	ExportData,
+	ShareView,
+	ViewUnderlyingData,
+	WebAuthoring,
+	RunExplainData,
+	ExportXml,
+	Write,
+	Delete,
+	ChangePermissions,
+	ChangeHierarchy,
+)
 
 type workbookBuilder struct {
-	client       *client.Client
-	projectNames map[string]string
+	client *client.Client
 }
 
 func (w *workbookBuilder) ResourceType(_ context.Context) *v2.ResourceType {
@@ -57,49 +59,25 @@ func (w *workbookBuilder) List(ctx context.Context, parentId *v2.ResourceId, pTo
 		return nil, "", nil, nil
 	}
 
-	projectName, err := w.resolveProjectName(ctx, parentId.Resource)
-	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to resolve project name for %s: %w", parentId.Resource, err)
-	}
-
-	var opts []client.ReqOpt
-	if projectName != "" {
-		opts = append(opts, client.WithFilter(fmt.Sprintf("projectName:eq:%s", projectName)))
-	}
-
-	workbooks, nextToken, _, err := w.client.GetWorkbooks(ctx, pToken.Token, opts...)
+	projectID := parentId.Resource
+	workbooks, nextToken, _, err := w.client.GetWorkbooks(ctx, pToken.Token)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("failed to list workbooks: %w", err)
 	}
 
 	var rv []*v2.Resource
 	for _, workbook := range workbooks {
-		workbookResource, err := workbookResource(workbook, parentId)
+		if workbook.Project == nil || workbook.Project.ID != projectID {
+			continue
+		}
+		resource, err := workbookResource(workbook, parentId)
 		if err != nil {
 			return nil, "", nil, fmt.Errorf("failed to create workbook resource for %s: %w", workbook.Name, err)
 		}
-		rv = append(rv, workbookResource)
+		rv = append(rv, resource)
 	}
 
 	return rv, nextToken, nil, nil
-}
-
-func (w *workbookBuilder) resolveProjectName(ctx context.Context, projectID string) (string, error) {
-	if w.projectNames != nil {
-		return w.projectNames[projectID], nil
-	}
-
-	projects, err := w.client.GetAllProjects(ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to list projects: %w", err)
-	}
-
-	w.projectNames = make(map[string]string, len(projects))
-	for _, p := range projects {
-		w.projectNames[p.ID] = p.Name
-	}
-
-	return w.projectNames[projectID], nil
 }
 
 func (w *workbookBuilder) Entitlements(_ context.Context, _ *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
@@ -107,26 +85,17 @@ func (w *workbookBuilder) Entitlements(_ context.Context, _ *v2.Resource, _ *pag
 }
 
 func (w *workbookBuilder) StaticEntitlements(_ context.Context, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
-	return staticPermissionEntitlements(workbookCapabilities, "Workbook"), "", nil, nil
+	return staticPermissionEntitlements(workbookCapabilities, "Workbook", resourceTypeProject), "", nil, nil
 }
 
 func (w *workbookBuilder) Grants(ctx context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
-	l := ctxzap.Extract(ctx)
-
 	workbookID := resource.Id.Resource
 	permissions, _, err := w.client.GetWorkbookPermissions(ctx, workbookID)
 	if err != nil {
-		l.Warn(
-			"failed to get workbook permissions, skipping grants for this workbook",
-			zap.String("workbook_id", workbookID),
-			zap.String("workbook_name", resource.DisplayName),
-			zap.Error(err),
-		)
-		return nil, "", nil, nil
+		return nil, "", nil, err
 	}
 
-	filtered := filterByCapabilities(permissions, workbookCapabilities)
-	rv, err := grantsFromCapabilities(resource, filtered)
+	rv, err := grantsFromCapabilities(resource, permissions, workbookCapabilities)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -143,7 +112,5 @@ func (w *workbookBuilder) Revoke(ctx context.Context, g *v2.Grant) (annotations.
 }
 
 func newWorkbookBuilder(client *client.Client) *workbookBuilder {
-	return &workbookBuilder{
-		client: client,
-	}
+	return &workbookBuilder{client: client}
 }

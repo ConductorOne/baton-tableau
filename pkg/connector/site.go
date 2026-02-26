@@ -97,6 +97,7 @@ func (s *siteBuilder) Entitlements(_ context.Context, resource *v2.Resource, _ *
 }
 
 func (s *siteBuilder) Grants(ctx context.Context, resource *v2.Resource, pToken *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
+	l := ctxzap.Extract(ctx)
 	users, nextToken, _, err := s.client.GetUsers(ctx, pToken.Token)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("failed to list users: %w", err)
@@ -106,9 +107,10 @@ func (s *siteBuilder) Grants(ctx context.Context, resource *v2.Resource, pToken 
 	for _, user := range users {
 		roleName := roles[user.SiteRole]
 		if roleName == "" {
-			ctxzap.Extract(ctx).Debug("Unknown Tableau Role Name",
-				zap.String("role_name", user.SiteRole),
-				zap.String("user", user.FullName),
+			l.Debug("skipping user with unknown site role",
+				zap.String("site_role", user.SiteRole),
+				zap.String("user_id", user.ID),
+				zap.String("user_name", user.FullName),
 			)
 			continue
 		}

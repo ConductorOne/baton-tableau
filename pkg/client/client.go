@@ -22,11 +22,16 @@
 //	- DELETE /api/{version}/sites/{siteId}/groups/{groupId}/users/{userId}                      - Remove user from group
 //
 //	Projects:
-//	- GET    /api/{version}/sites/{siteId}/projects                                             - List projects (paginated)
-//	- GET    /api/{version}/sites/{siteId}/projects/{projectId}/permissions                     - Get project permissions
-//	- PUT    /api/{version}/sites/{siteId}/projects/{projectId}/permissions                     - Add project permission
-//	- DELETE /api/{version}/sites/{siteId}/projects/{projectId}/permissions/users/{userId}/{cap}/{mode}   - Delete user project permission
-//	- DELETE /api/{version}/sites/{siteId}/projects/{projectId}/permissions/groups/{groupId}/{cap}/{mode} - Delete group project permission
+//	- GET    /api/{version}/sites/{siteId}/projects                                                                              - List projects (paginated, supports filter)
+//	- GET    /api/{version}/sites/{siteId}/projects?filter=id:eq:{projectId}                                                     - Get project by ID
+//	- GET    /api/{version}/sites/{siteId}/projects/{projectId}/permissions                                                      - Get project permissions
+//	- PUT    /api/{version}/sites/{siteId}/projects/{projectId}/permissions                                                      - Add project permission
+//	- DELETE /api/{version}/sites/{siteId}/projects/{projectId}/permissions/users/{userId}/{cap}/{mode}                          - Delete user project permission
+//	- DELETE /api/{version}/sites/{siteId}/projects/{projectId}/permissions/groups/{groupId}/{cap}/{mode}                        - Delete group project permission
+//	- GET    /api/{version}/sites/{siteId}/projects/{projectId}/default-permissions/workbooks                                    - Get project default workbook permissions
+//	- PUT    /api/{version}/sites/{siteId}/projects/{projectId}/default-permissions/workbooks                                    - Add project default workbook permission
+//	- DELETE /api/{version}/sites/{siteId}/projects/{projectId}/default-permissions/workbooks/users/{userId}/{cap}/{mode}        - Delete user default workbook permission
+//	- DELETE /api/{version}/sites/{siteId}/projects/{projectId}/default-permissions/workbooks/groups/{groupId}/{cap}/{mode}      - Delete group default workbook permission
 //
 //	Workbooks:
 //	- GET    /api/{version}/sites/{siteId}/workbooks                                            - List workbooks (paginated)
@@ -382,27 +387,6 @@ func (c *Client) GetProjects(ctx context.Context, pageToken string) ([]*Project,
 	return res.Projects.Project, nextToken, annos, nil
 }
 
-// GetAllProjects returns every project on the site, handling pagination internally.
-func (c *Client) GetAllProjects(ctx context.Context) ([]*Project, error) {
-	var all []*Project
-
-	for pageToken := ""; ; {
-		projects, nextToken, _, err := c.GetProjects(ctx, pageToken)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get all projects: %w", err)
-		}
-
-		all = append(all, projects...)
-
-		if nextToken == "" {
-			break
-		}
-		pageToken = nextToken
-	}
-
-	return all, nil
-}
-
 // GetProjectPermissions returns permissions for a project.
 func (c *Client) GetProjectPermissions(ctx context.Context, projectID string) ([]*GranteeCapabilities, annotations.Annotations, error) {
 	urlGetProjectPermissions, err := c.buildSiteURL(pathProjects, projectID, pathPermissions)
@@ -437,6 +421,58 @@ func (c *Client) AddProjectGroupPermission(ctx context.Context, projectID, group
 // DeleteProjectGroupPermission removes a group permission from a project.
 func (c *Client) DeleteProjectGroupPermission(ctx context.Context, projectID, groupID, capabilityName, capabilityMode string) (annotations.Annotations, error) {
 	return c.deletePermission(ctx, pathProjects, projectID, pathGroups, groupID, capabilityName, capabilityMode)
+}
+
+// GetProjectDefaultWorkbookPermissions returns the default workbook permissions for a project.
+func (c *Client) GetProjectDefaultWorkbookPermissions(ctx context.Context, projectID string) ([]*GranteeCapabilities, annotations.Annotations, error) {
+	url, err := c.buildSiteURL(pathProjects, projectID, pathDefaultPermissions, pathWorkbooks)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var res permissionsResponse
+	annos, err := c.doRequest(ctx, http.MethodGet, url, &res, nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get project default workbook permissions: %w", err)
+	}
+
+	return res.Permissions.GranteeCapabilities, annos, nil
+}
+
+// AddProjectDefaultWorkbookPermission adds a default workbook user permission to a project.
+func (c *Client) AddProjectDefaultWorkbookPermission(ctx context.Context, projectID, userID, capabilityName, capabilityMode string) (annotations.Annotations, error) {
+	return c.addPermission(ctx, []string{pathProjects, projectID, pathDefaultPermissions, pathWorkbooks}, pathUser, userID, capabilityName, capabilityMode)
+}
+
+// DeleteProjectDefaultWorkbookPermission removes a default workbook user permission from a project.
+func (c *Client) DeleteProjectDefaultWorkbookPermission(ctx context.Context, projectID, userID, capabilityName, capabilityMode string) (annotations.Annotations, error) {
+	url, err := c.buildSiteURL(pathProjects, projectID, pathDefaultPermissions, pathWorkbooks, pathUsers, userID, capabilityName, capabilityMode)
+	if err != nil {
+		return nil, err
+	}
+	annos, err := c.doRequest(ctx, http.MethodDelete, url, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to delete project default workbook permission: %w", err)
+	}
+	return annos, nil
+}
+
+// AddProjectDefaultWorkbookGroupPermission adds a default workbook group permission to a project.
+func (c *Client) AddProjectDefaultWorkbookGroupPermission(ctx context.Context, projectID, groupID, capabilityName, capabilityMode string) (annotations.Annotations, error) {
+	return c.addPermission(ctx, []string{pathProjects, projectID, pathDefaultPermissions, pathWorkbooks}, pathGroup, groupID, capabilityName, capabilityMode)
+}
+
+// DeleteProjectDefaultWorkbookGroupPermission removes a default workbook group permission from a project.
+func (c *Client) DeleteProjectDefaultWorkbookGroupPermission(ctx context.Context, projectID, groupID, capabilityName, capabilityMode string) (annotations.Annotations, error) {
+	url, err := c.buildSiteURL(pathProjects, projectID, pathDefaultPermissions, pathWorkbooks, pathGroups, groupID, capabilityName, capabilityMode)
+	if err != nil {
+		return nil, err
+	}
+	annos, err := c.doRequest(ctx, http.MethodDelete, url, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to delete project default workbook group permission: %w", err)
+	}
+	return annos, nil
 }
 
 // =============================================================================

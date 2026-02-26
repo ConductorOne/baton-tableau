@@ -15,17 +15,18 @@ const (
 
 	defaultPageSize = 100
 
-	authSignin            = "auth/signin"
-	pathSites             = "sites"
-	pathUser              = "user"
-	pathGroup             = "group"
-	pathUsers             = "users"
-	pathGroups            = "groups"
-	pathProjects          = "projects"
-	pathWorkbooks         = "workbooks"
-	pathViews             = "views"
-	pathPermissions       = "permissions"
-	pathIdpConfigurations = "site-auth-configurations"
+	authSignin              = "auth/signin"
+	pathSites               = "sites"
+	pathUser                = "user"
+	pathGroup               = "group"
+	pathUsers               = "users"
+	pathGroups              = "groups"
+	pathProjects            = "projects"
+	pathWorkbooks           = "workbooks"
+	pathViews               = "views"
+	pathPermissions         = "permissions"
+	pathDefaultPermissions  = "default-permissions"
+	pathIdpConfigurations   = "site-auth-configurations"
 )
 
 // BuildBaseURL constructs the Tableau REST API base URL from a server path and API version.
