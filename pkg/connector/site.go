@@ -6,7 +6,6 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
-	"github.com/conductorone/baton-sdk/pkg/pagination"
 	ent "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
@@ -66,22 +65,22 @@ func siteResource(site *client.Site) (*v2.Resource, error) {
 	return ret, nil
 }
 
-func (s *siteBuilder) List(ctx context.Context, _ *v2.ResourceId, _ *pagination.Token) ([]*v2.Resource, string, annotations.Annotations, error) {
+func (s *siteBuilder) List(ctx context.Context, _ *v2.ResourceId, _ rs.SyncOpAttrs) ([]*v2.Resource, *rs.SyncOpResults, error) {
 	var rv []*v2.Resource
 	site, _, err := s.client.GetSite(ctx)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to get site: %w", err)
+		return nil, nil, fmt.Errorf("failed to get site: %w", err)
 	}
 	siteResource, err := siteResource(site)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to build site resource: %w", err)
+		return nil, nil, fmt.Errorf("failed to build site resource: %w", err)
 	}
 	rv = append(rv, siteResource)
 
-	return rv, "", nil, nil
+	return rv, nil, nil
 }
 
-func (s *siteBuilder) Entitlements(_ context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
+func (s *siteBuilder) Entitlements(_ context.Context, resource *v2.Resource, _ rs.SyncOpAttrs) ([]*v2.Entitlement, *rs.SyncOpResults, error) {
 	var rv []*v2.Entitlement
 	for _, role := range roles {
 		permissionOptions := []ent.EntitlementOption{
@@ -93,13 +92,13 @@ func (s *siteBuilder) Entitlements(_ context.Context, resource *v2.Resource, _ *
 		permissionEntitlement := ent.NewPermissionEntitlement(resource, role, permissionOptions...)
 		rv = append(rv, permissionEntitlement)
 	}
-	return rv, "", nil, nil
+	return rv, nil, nil
 }
 
-func (s *siteBuilder) Grants(ctx context.Context, resource *v2.Resource, pToken *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
-	users, nextToken, _, err := s.client.GetUsers(ctx, pToken.Token)
+func (s *siteBuilder) Grants(ctx context.Context, resource *v2.Resource, opts rs.SyncOpAttrs) ([]*v2.Grant, *rs.SyncOpResults, error) {
+	users, nextToken, _, err := s.client.GetUsers(ctx, opts.PageToken.Token)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to list users: %w", err)
+		return nil, nil, fmt.Errorf("failed to list users: %w", err)
 	}
 
 	l := ctxzap.Extract(ctx)
@@ -116,14 +115,14 @@ func (s *siteBuilder) Grants(ctx context.Context, resource *v2.Resource, pToken 
 		}
 		userResource, err := userResource(user, resource.Id)
 		if err != nil {
-			return nil, "", nil, fmt.Errorf("failed to build user resource for %s: %w", user.ID, err)
+			return nil, nil, fmt.Errorf("failed to build user resource for %s: %w", user.ID, err)
 		}
 
 		permissionGrant := grant.NewGrant(resource, roleName, userResource.Id)
 		rv = append(rv, permissionGrant)
 	}
 
-	return rv, nextToken, nil, nil
+	return rv, &rs.SyncOpResults{NextPageToken: nextToken}, nil
 }
 
 func (s *siteBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {

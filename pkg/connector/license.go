@@ -7,7 +7,6 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
-	"github.com/conductorone/baton-sdk/pkg/pagination"
 	ent "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
@@ -56,25 +55,25 @@ func licenseResource(license string) (*v2.Resource, error) {
 	return ret, nil
 }
 
-func (l *licenseBuilder) List(_ context.Context, _ *v2.ResourceId, _ *pagination.Token) ([]*v2.Resource, string, annotations.Annotations, error) {
+func (l *licenseBuilder) List(_ context.Context, _ *v2.ResourceId, _ rs.SyncOpAttrs) ([]*v2.Resource, *rs.SyncOpResults, error) {
 	var rv []*v2.Resource
 
 	for _, license := range licenses {
 		sr, err := licenseResource(license)
 		if err != nil {
-			return nil, "", nil, fmt.Errorf("failed to create license resource %s: %w", license, err)
+			return nil, nil, fmt.Errorf("failed to create license resource %s: %w", license, err)
 		}
 		rv = append(rv, sr)
 	}
 
-	return rv, "", nil, nil
+	return rv, nil, nil
 }
 
-func (l *licenseBuilder) Entitlements(_ context.Context, _ *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
-	return nil, "", nil, nil
+func (l *licenseBuilder) Entitlements(_ context.Context, _ *v2.Resource, _ rs.SyncOpAttrs) ([]*v2.Entitlement, *rs.SyncOpResults, error) {
+	return nil, nil, nil
 }
 
-func (l *licenseBuilder) StaticEntitlements(_ context.Context, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
+func (l *licenseBuilder) StaticEntitlements(_ context.Context, _ rs.SyncOpAttrs) ([]*v2.Entitlement, *rs.SyncOpResults, error) {
 	en := ent.NewAssignmentEntitlement(
 		nil,
 		memberEntitlement,
@@ -83,13 +82,13 @@ func (l *licenseBuilder) StaticEntitlements(_ context.Context, _ *pagination.Tok
 		ent.WithDescription("Member of License in Tableau"),
 	)
 
-	return []*v2.Entitlement{en}, "", nil, nil
+	return []*v2.Entitlement{en}, nil, nil
 }
 
-func (l *licenseBuilder) Grants(ctx context.Context, resource *v2.Resource, pToken *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
+func (l *licenseBuilder) Grants(ctx context.Context, resource *v2.Resource, opts rs.SyncOpAttrs) ([]*v2.Grant, *rs.SyncOpResults, error) {
 	allRoles := RolesPerLicense[resource.DisplayName]
 	if len(allRoles) == 0 {
-		return nil, "", nil, nil
+		return nil, nil, nil
 	}
 
 	roleSet := make(map[string]bool, len(allRoles))
@@ -99,14 +98,14 @@ func (l *licenseBuilder) Grants(ctx context.Context, resource *v2.Resource, pTok
 
 	filterable := filterableRoles(allRoles)
 
-	var opts []client.ReqOpt
+	var reqOpts []client.ReqOpt
 	if len(filterable) == len(allRoles) && len(filterable) > 0 {
-		opts = append(opts, siteRoleFilter(filterable))
+		reqOpts = append(reqOpts, siteRoleFilter(filterable))
 	}
 
-	users, nextToken, _, err := l.client.GetUsers(ctx, pToken.Token, opts...)
+	users, nextToken, _, err := l.client.GetUsers(ctx, opts.PageToken.Token, reqOpts...)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to list users for license %s: %w", resource.DisplayName, err)
+		return nil, nil, fmt.Errorf("failed to list users for license %s: %w", resource.DisplayName, err)
 	}
 
 	var rv []*v2.Grant
@@ -117,14 +116,14 @@ func (l *licenseBuilder) Grants(ctx context.Context, resource *v2.Resource, pTok
 
 		userResource, err := userResource(user, resource.Id)
 		if err != nil {
-			return nil, "", nil, fmt.Errorf("failed to build user resource for %s: %w", user.ID, err)
+			return nil, nil, fmt.Errorf("failed to build user resource for %s: %w", user.ID, err)
 		}
 
 		gr := grant.NewGrant(resource, memberEntitlement, userResource.Id)
 		rv = append(rv, gr)
 	}
 
-	return rv, nextToken, nil, nil
+	return rv, &rs.SyncOpResults{NextPageToken: nextToken}, nil
 }
 
 func (l *licenseBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {

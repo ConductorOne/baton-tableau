@@ -6,7 +6,6 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
-	"github.com/conductorone/baton-sdk/pkg/pagination"
 	ent "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
@@ -57,29 +56,29 @@ func groupResource(group *client.Group, parentResourceID *v2.ResourceId) (*v2.Re
 	return ret, nil
 }
 
-func (g *groupBuilder) List(ctx context.Context, parentId *v2.ResourceId, pToken *pagination.Token) ([]*v2.Resource, string, annotations.Annotations, error) {
+func (g *groupBuilder) List(ctx context.Context, parentId *v2.ResourceId, opts rs.SyncOpAttrs) ([]*v2.Resource, *rs.SyncOpResults, error) {
 	if parentId == nil {
-		return nil, "", nil, nil
+		return nil, nil, nil
 	}
 
-	groups, nextToken, _, err := g.client.GetGroups(ctx, pToken.Token)
+	groups, nextToken, _, err := g.client.GetGroups(ctx, opts.PageToken.Token)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to list groups: %w", err)
+		return nil, nil, fmt.Errorf("failed to list groups: %w", err)
 	}
 
 	var rv []*v2.Resource
 	for _, group := range groups {
 		groupResource, err := groupResource(group, parentId)
 		if err != nil {
-			return nil, "", nil, fmt.Errorf("failed to build group resource for %s: %w", group.ID, err)
+			return nil, nil, fmt.Errorf("failed to build group resource for %s: %w", group.ID, err)
 		}
 		rv = append(rv, groupResource)
 	}
 
-	return rv, nextToken, nil, nil
+	return rv, &rs.SyncOpResults{NextPageToken: nextToken}, nil
 }
 
-func (g *groupBuilder) Entitlements(_ context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
+func (g *groupBuilder) Entitlements(_ context.Context, resource *v2.Resource, _ rs.SyncOpAttrs) ([]*v2.Entitlement, *rs.SyncOpResults, error) {
 	var rv []*v2.Entitlement
 
 	assigmentOptions := []ent.EntitlementOption{
@@ -91,23 +90,23 @@ func (g *groupBuilder) Entitlements(_ context.Context, resource *v2.Resource, _ 
 	en := ent.NewAssignmentEntitlement(resource, memberEntitlement, assigmentOptions...)
 	rv = append(rv, en)
 
-	return rv, "", nil, nil
+	return rv, nil, nil
 }
 
-func (g *groupBuilder) Grants(ctx context.Context, resource *v2.Resource, pToken *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
+func (g *groupBuilder) Grants(ctx context.Context, resource *v2.Resource, opts rs.SyncOpAttrs) ([]*v2.Grant, *rs.SyncOpResults, error) {
 	groupTrait, err := rs.GetGroupTrait(resource)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to get group trait: %w", err)
+		return nil, nil, fmt.Errorf("failed to get group trait: %w", err)
 	}
 
 	groupId, ok := rs.GetProfileStringValue(groupTrait.Profile, "group_id")
 	if !ok {
-		return nil, "", nil, fmt.Errorf("missing group_id in group profile")
+		return nil, nil, fmt.Errorf("missing group_id in group profile")
 	}
 
-	users, nextToken, _, err := g.client.GetGroupUsers(ctx, groupId, pToken.Token)
+	users, nextToken, _, err := g.client.GetGroupUsers(ctx, groupId, opts.PageToken.Token)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to list group users: %w", err)
+		return nil, nil, fmt.Errorf("failed to list group users: %w", err)
 	}
 
 	var rv []*v2.Grant
@@ -125,7 +124,7 @@ func (g *groupBuilder) Grants(ctx context.Context, resource *v2.Resource, pToken
 
 		userResource, err := userResource(user, resource.Id)
 		if err != nil {
-			return nil, "", nil, fmt.Errorf("failed to build user resource for %s: %w", user.ID, err)
+			return nil, nil, fmt.Errorf("failed to build user resource for %s: %w", user.ID, err)
 		}
 
 		var grantOpts []grant.GrantOption
@@ -137,7 +136,7 @@ func (g *groupBuilder) Grants(ctx context.Context, resource *v2.Resource, pToken
 		rv = append(rv, gr)
 	}
 
-	return rv, nextToken, nil, nil
+	return rv, &rs.SyncOpResults{NextPageToken: nextToken}, nil
 }
 
 func (g *groupBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {

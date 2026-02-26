@@ -6,7 +6,6 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
-	"github.com/conductorone/baton-sdk/pkg/pagination"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-tableau/pkg/client"
 )
@@ -37,12 +36,21 @@ func (w *workbookBuilder) ResourceType(_ context.Context) *v2.ResourceType {
 	return resourceTypeWorkbook
 }
 
-func workbookResource(workbook *client.Workbook, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
+func workbookResource(workbook *client.Workbook) (*v2.Resource, error) {
+	var parentId *v2.ResourceId
+
+	if workbook.Project != nil {
+		parentId = &v2.ResourceId{
+			ResourceType: resourceTypeProject.Id,
+			Resource:     workbook.Project.ID,
+		}
+	}
+
 	ret, err := rs.NewResource(
 		workbook.Name,
 		resourceTypeWorkbook,
 		workbook.ID,
-		rs.WithParentResourceID(parentResourceID),
+		rs.WithParentResourceID(parentId),
 		rs.WithAnnotation(
 			&v2.ChildResourceType{ResourceTypeId: resourceTypeView.Id},
 		),
@@ -54,53 +62,50 @@ func workbookResource(workbook *client.Workbook, parentResourceID *v2.ResourceId
 	return ret, nil
 }
 
-func (w *workbookBuilder) List(ctx context.Context, parentId *v2.ResourceId, pToken *pagination.Token) ([]*v2.Resource, string, annotations.Annotations, error) {
-	if parentId == nil {
-		return nil, "", nil, nil
-	}
-
-	projectID := parentId.Resource
-	workbooks, nextToken, _, err := w.client.GetWorkbooks(ctx, pToken.Token)
+func (w *workbookBuilder) List(ctx context.Context, _ *v2.ResourceId, opts rs.SyncOpAttrs) ([]*v2.Resource, *rs.SyncOpResults, error) {
+	workbooks, nextToken, _, err := w.client.GetWorkbooks(ctx, opts.PageToken.Token)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to list workbooks: %w", err)
+		return nil, nil, fmt.Errorf("failed to list workbooks: %w", err)
 	}
 
 	var rv []*v2.Resource
 	for _, workbook := range workbooks {
-		if workbook.Project == nil || workbook.Project.ID != projectID {
+		if workbook.Project == nil {
+			// Only sync workbooks that belong to a project, since view permissions are inherited from the workbook and we can't manage view permissions for workbooks that don't belong to a project.
 			continue
 		}
-		resource, err := workbookResource(workbook, parentId)
+		resource, err := workbookResource(workbook)
 		if err != nil {
-			return nil, "", nil, fmt.Errorf("failed to create workbook resource for %s: %w", workbook.Name, err)
+			return nil, nil, fmt.Errorf("failed to create workbook resource for %s: %w", workbook.Name, err)
 		}
+
 		rv = append(rv, resource)
 	}
 
-	return rv, nextToken, nil, nil
+	return rv, &rs.SyncOpResults{NextPageToken: nextToken}, nil
 }
 
-func (w *workbookBuilder) Entitlements(_ context.Context, _ *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
-	return nil, "", nil, nil
+func (w *workbookBuilder) Entitlements(_ context.Context, _ *v2.Resource, _ rs.SyncOpAttrs) ([]*v2.Entitlement, *rs.SyncOpResults, error) {
+	return nil, nil, nil
 }
 
-func (w *workbookBuilder) StaticEntitlements(_ context.Context, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
-	return staticPermissionEntitlements(workbookCapabilities, "Workbook", resourceTypeProject), "", nil, nil
+func (w *workbookBuilder) StaticEntitlements(_ context.Context, _ rs.SyncOpAttrs) ([]*v2.Entitlement, *rs.SyncOpResults, error) {
+	return staticPermissionEntitlements(workbookCapabilities, "Workbook", resourceTypeProject), nil, nil
 }
 
-func (w *workbookBuilder) Grants(ctx context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
+func (w *workbookBuilder) Grants(ctx context.Context, resource *v2.Resource, _ rs.SyncOpAttrs) ([]*v2.Grant, *rs.SyncOpResults, error) {
 	workbookID := resource.Id.Resource
 	permissions, _, err := w.client.GetWorkbookPermissions(ctx, workbookID)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	rv, err := grantsFromCapabilities(resource, permissions, workbookCapabilities)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
-	return rv, "", nil, nil
+	return rv, nil, nil
 }
 
 func (w *workbookBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {

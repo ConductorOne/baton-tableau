@@ -76,7 +76,6 @@ func projectResource(project *client.Project) (*v2.Resource, error) {
 		project.ID,
 		rs.WithParentResourceID(parentResourceID),
 		rs.WithAnnotation(
-			&v2.ChildResourceType{ResourceTypeId: resourceTypeWorkbook.Id},
 			wrapperspb.String(project.ContentPermissions),
 		),
 	)
@@ -101,42 +100,42 @@ func projectContentPermissions(resource *v2.Resource) string {
 	return ""
 }
 
-func (p *projectBuilder) List(ctx context.Context, parentId *v2.ResourceId, pToken *pagination.Token) ([]*v2.Resource, string, annotations.Annotations, error) {
+func (p *projectBuilder) List(ctx context.Context, parentId *v2.ResourceId, opts rs.SyncOpAttrs) ([]*v2.Resource, *rs.SyncOpResults, error) {
 	if parentId == nil {
-		return nil, "", nil, nil
+		return nil, nil, nil
 	}
 
-	projects, nextToken, _, err := p.client.GetProjects(ctx, pToken.Token)
+	projects, nextToken, _, err := p.client.GetProjects(ctx, opts.PageToken.Token)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to list projects: %w", err)
+		return nil, nil, fmt.Errorf("failed to list projects: %w", err)
 	}
 
 	var rv []*v2.Resource
 	for _, project := range projects {
 		resource, err := projectResource(project)
 		if err != nil {
-			return nil, "", nil, fmt.Errorf("failed to create project resource for %s: %w", project.Name, err)
+			return nil, nil, fmt.Errorf("failed to create project resource for %s: %w", project.Name, err)
 		}
 		rv = append(rv, resource)
 	}
 
-	return rv, nextToken, nil, nil
+	return rv, &rs.SyncOpResults{NextPageToken: nextToken}, nil
 }
 
-func (p *projectBuilder) Entitlements(_ context.Context, _ *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
-	return nil, "", nil, nil
+func (p *projectBuilder) Entitlements(_ context.Context, _ *v2.Resource, _ rs.SyncOpAttrs) ([]*v2.Entitlement, *rs.SyncOpResults, error) {
+	return nil, nil, nil
 }
 
-func (p *projectBuilder) StaticEntitlements(_ context.Context, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
+func (p *projectBuilder) StaticEntitlements(_ context.Context, _ rs.SyncOpAttrs) ([]*v2.Entitlement, *rs.SyncOpResults, error) {
 	rv := staticPermissionEntitlements(projectCapabilities, "Project", resourceTypeProject)
 	rv = append(rv, staticPermissionEntitlements(projectDefaultWorkbookCapabilities, "Project", resourceTypeProject)...)
-	return rv, "", nil, nil
+	return rv, nil, nil
 }
 
-func (p *projectBuilder) Grants(ctx context.Context, resource *v2.Resource, pToken *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
+func (p *projectBuilder) Grants(ctx context.Context, resource *v2.Resource, opts rs.SyncOpAttrs) ([]*v2.Grant, *rs.SyncOpResults, error) {
 	var b pagination.Bag
-	if err := b.Unmarshal(pToken.Token); err != nil {
-		return nil, "", nil, err
+	if err := b.Unmarshal(opts.PageToken.Token); err != nil {
+		return nil, nil, err
 	}
 
 	projectID := resource.Id.Resource
@@ -146,22 +145,22 @@ func (p *projectBuilder) Grants(ctx context.Context, resource *v2.Resource, pTok
 		// Phase 1: fetch project permissions and default workbook permissions.
 		accessPerms, _, err := p.client.GetProjectPermissions(ctx, projectID)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 
 		rv, err := grantsFromCapabilities(resource, accessPerms, projectCapabilities)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 
 		defaultWorkbookPerms, _, err := p.client.GetProjectDefaultWorkbookPermissions(ctx, projectID)
 		if err != nil {
-			return rv, "", nil, err
+			return rv, nil, err
 		}
 
 		defaultWorkbookRv, err := grantsFromCapabilities(resource, defaultWorkbookPerms, projectDefaultWorkbookCapabilities)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 		rv = append(rv, defaultWorkbookRv...)
 
@@ -171,7 +170,7 @@ func (p *projectBuilder) Grants(ctx context.Context, resource *v2.Resource, pTok
 			parentID := resource.ParentResourceId.Resource
 			proxyRv, err := inheritedGrants(resource, resourceTypeProject, parentID, projectDefaultWorkbookCapabilities, projectDefaultWorkbookCapabilities)
 			if err != nil {
-				return nil, "", nil, err
+				return nil, nil, err
 			}
 			rv = append(rv, proxyRv...)
 		}
@@ -186,16 +185,16 @@ func (p *projectBuilder) Grants(ctx context.Context, resource *v2.Resource, pTok
 
 		nextToken, err := b.Marshal()
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
-		return rv, nextToken, nil, nil
+		return rv, &rs.SyncOpResults{NextPageToken: nextToken}, nil
 
 	case resourceTypeWorkbook.Id:
 		// Phase 2: emit inherited grants for every workbook belonging to this
 		// locked project, paginating through all workbooks.
-		workbooks, nextWorkbookToken, _, err := p.client.GetWorkbooks(ctx, b.PageToken())
+		workbooks, nextWorkbookToken, _, err := p.client.GetWorkbooks(ctx, b.PageToken(), client.WithFilter("projectName:eq:"+resource.DisplayName))
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 
 		var rv []*v2.Grant
@@ -203,28 +202,28 @@ func (p *projectBuilder) Grants(ctx context.Context, resource *v2.Resource, pTok
 			if workbook.Project == nil || workbook.Project.ID != projectID {
 				continue
 			}
-			wResource, err := workbookResource(workbook, resource.Id)
+			wResource, err := workbookResource(workbook)
 			if err != nil {
-				return nil, "", nil, fmt.Errorf("failed to create workbook resource for %s: %w", workbook.Name, err)
+				return nil, nil, fmt.Errorf("failed to create workbook resource for %s: %w", workbook.Name, err)
 			}
 			wGrants, err := inheritedGrants(wResource, resourceTypeProject, projectID, workbookCapabilities, projectDefaultWorkbookCapabilities)
 			if err != nil {
-				return nil, "", nil, err
+				return nil, nil, err
 			}
 			rv = append(rv, wGrants...)
 		}
 
 		if err := b.Next(nextWorkbookToken); err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 		nextToken, err := b.Marshal()
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
-		return rv, nextToken, nil, nil
+		return rv, &rs.SyncOpResults{NextPageToken: nextToken}, nil
 	}
 
-	return nil, "", nil, nil
+	return nil, nil, nil
 }
 
 func (p *projectBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
