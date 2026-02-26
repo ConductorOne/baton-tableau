@@ -9,21 +9,21 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-tableau/pkg/client"
-	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
-	"go.uber.org/zap"
 )
 
-var viewCapabilities = map[string]string{
-	Read:               "view",
-	Filter:             "filter",
-	ViewComments:       "view comments",
-	AddComment:         "add comment",
-	ExportImage:        "export image",
-	ExportData:         "export data",
-	ShareView:          "share view",
-	ViewUnderlyingData: "view underlying data",
-	WebAuthoring:       "web authoring",
-}
+var viewCapabilities = pickCapabilities(
+	Read,
+	Filter,
+	ViewComments,
+	AddComment,
+	ExportImage,
+	ExportData,
+	ShareView,
+	ViewUnderlyingData,
+	WebAuthoring,
+	Delete,
+	ChangePermissions,
+)
 
 type viewBuilder struct {
 	client *client.Client
@@ -87,30 +87,20 @@ func (v *viewBuilder) Entitlements(_ context.Context, _ *v2.Resource, _ *paginat
 }
 
 func (v *viewBuilder) StaticEntitlements(_ context.Context, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
-	return staticPermissionEntitlements(viewCapabilities, "View"), "", nil, nil
+	return staticPermissionEntitlements(viewCapabilities, "View", resourceTypeWorkbook), "", nil, nil
 }
 
 func (v *viewBuilder) Grants(ctx context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
-	l := ctxzap.Extract(ctx)
-
 	if resource.ParentResourceId != nil {
-		showTabs, err := v.getShowTabs(ctx, resource.ParentResourceId.Resource)
+		workbookID := resource.ParentResourceId.Resource
+		showTabs, err := v.getShowTabs(ctx, workbookID)
 		if err != nil {
 			return nil, "", nil, err
 		}
 		if showTabs {
-			workbookID := resource.ParentResourceId.Resource
-			permissions, _, err := v.client.GetWorkbookPermissions(ctx, workbookID)
-			if err != nil {
-				l.Warn(
-					"failed to get workbook permissions for view inheritance, skipping grants for this view",
-					zap.String("workbook_id", workbookID),
-					zap.String("view_name", resource.DisplayName),
-					zap.Error(err),
-				)
-				return nil, "", nil, nil
-			}
-			rv, err := grantsFromCapabilities(resource, filterByCapabilities(permissions, viewCapabilities))
+			// View permissions are inherited from the workbook: create proxy grants so
+			// the SDK expander propagates the workbook's permissions here.
+			rv, err := inheritedGrants(resource, resourceTypeWorkbook, workbookID, viewCapabilities, workbookCapabilities)
 			if err != nil {
 				return nil, "", nil, err
 			}
@@ -121,16 +111,10 @@ func (v *viewBuilder) Grants(ctx context.Context, resource *v2.Resource, _ *pagi
 	viewID := resource.Id.Resource
 	permissions, _, err := v.client.GetViewPermissions(ctx, viewID)
 	if err != nil {
-		l.Warn(
-			"failed to get view permissions, skipping grants for this view",
-			zap.String("view_id", viewID),
-			zap.String("view_name", resource.DisplayName),
-			zap.Error(err),
-		)
-		return nil, "", nil, nil
+		return nil, "", nil, err
 	}
 
-	rv, err := grantsFromCapabilities(resource, filterByCapabilities(permissions, viewCapabilities))
+	rv, err := grantsFromCapabilities(resource, permissions, viewCapabilities)
 	if err != nil {
 		return nil, "", nil, err
 	}

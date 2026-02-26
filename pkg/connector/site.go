@@ -107,7 +107,7 @@ func (s *siteBuilder) Grants(ctx context.Context, resource *v2.Resource, pToken 
 	for _, user := range users {
 		roleName := roles[user.SiteRole]
 		if roleName == "" {
-			l.Warn("skipping user with unknown site role",
+			l.Debug("skipping user with unknown site role",
 				zap.String("site_role", user.SiteRole),
 				zap.String("user_id", user.ID),
 				zap.String("user_name", user.FullName),

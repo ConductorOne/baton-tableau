@@ -53,6 +53,7 @@ type Project struct {
 	Name               string    `json:"name"`
 	Description        string    `json:"description"`
 	ContentPermissions string    `json:"contentPermissions"`
+	ParentProjectId    string    `json:"parentProjectId,omitempty"`
 	Owner              *OwnerRef `json:"owner,omitempty"`
 }
 

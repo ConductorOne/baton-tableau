@@ -177,8 +177,6 @@ func (g *groupBuilder) Revoke(ctx context.Context, grant *v2.Grant) (annotations
 
 	// "All Users" is Tableau-managed. Users cannot be removed from it.
 	if isAllUsersGroup(entitlement.Resource) {
-		l.Warn("cannot revoke All Users group membership: this group is managed by Tableau and cannot be modified",
-			zap.String("principal_id", principal.Id.Resource))
 		return nil, fmt.Errorf("cannot revoke membership from the 'All Users' group: this group is automatically managed by Tableau and cannot be modified via the API")
 	}
 
