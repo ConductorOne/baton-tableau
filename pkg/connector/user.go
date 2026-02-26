@@ -9,14 +9,13 @@ import (
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
-	"github.com/conductorone/baton-sdk/pkg/pagination"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/conductorone/baton-tableau/pkg/client"
 	"google.golang.org/grpc/codes"
 )
 
-var _ connectorbuilder.AccountManager = &userBuilder{}
+var _ connectorbuilder.AccountManagerV2 = &userBuilder{}
 
 type userBuilder struct {
 	client *client.Client
@@ -70,34 +69,34 @@ func userResource(user *client.User, parentResourceID *v2.ResourceId) (*v2.Resou
 	return ret, nil
 }
 
-func (u *userBuilder) List(ctx context.Context, parentId *v2.ResourceId, pToken *pagination.Token) ([]*v2.Resource, string, annotations.Annotations, error) {
+func (u *userBuilder) List(ctx context.Context, parentId *v2.ResourceId, opts rs.SyncOpAttrs) ([]*v2.Resource, *rs.SyncOpResults, error) {
 	if parentId == nil {
-		return nil, "", nil, nil
+		return nil, nil, nil
 	}
 
-	users, nextToken, _, err := u.client.GetUsers(ctx, pToken.Token)
+	users, nextToken, _, err := u.client.GetUsers(ctx, opts.PageToken.Token)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to list users: %w", err)
+		return nil, nil, fmt.Errorf("failed to list users: %w", err)
 	}
 
 	var rv []*v2.Resource
 	for _, user := range users {
 		userResource, err := userResource(user, parentId)
 		if err != nil {
-			return nil, "", nil, fmt.Errorf("failed to build user resource for %s: %w", user.ID, err)
+			return nil, nil, fmt.Errorf("failed to build user resource for %s: %w", user.ID, err)
 		}
 		rv = append(rv, userResource)
 	}
 
-	return rv, nextToken, nil, nil
+	return rv, &rs.SyncOpResults{NextPageToken: nextToken}, nil
 }
 
-func (u *userBuilder) Entitlements(_ context.Context, _ *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
-	return nil, "", nil, nil
+func (u *userBuilder) Entitlements(_ context.Context, _ *v2.Resource, _ rs.SyncOpAttrs) ([]*v2.Entitlement, *rs.SyncOpResults, error) {
+	return nil, nil, nil
 }
 
-func (u *userBuilder) Grants(_ context.Context, _ *v2.Resource, _ *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
-	return nil, "", nil, nil
+func (u *userBuilder) Grants(_ context.Context, _ *v2.Resource, _ rs.SyncOpAttrs) ([]*v2.Grant, *rs.SyncOpResults, error) {
+	return nil, nil, nil
 }
 
 func (u *userBuilder) CreateAccountCapabilityDetails(ctx context.Context) (*v2.CredentialDetailsAccountProvisioning, annotations.Annotations, error) {

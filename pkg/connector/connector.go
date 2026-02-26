@@ -7,16 +7,19 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
+	"github.com/conductorone/baton-sdk/pkg/cli"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
+	"github.com/conductorone/baton-sdk/pkg/field"
 	"github.com/conductorone/baton-tableau/pkg/client"
+	cfg "github.com/conductorone/baton-tableau/pkg/config"
 )
 
 type Connector struct {
 	client *client.Client
 }
 
-func (c *Connector) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncer {
-	return []connectorbuilder.ResourceSyncer{
+func (c *Connector) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncerV2 {
+	return []connectorbuilder.ResourceSyncerV2{
 		newUserBuilder(c.client),
 		newSiteBuilder(c.client),
 		newGroupBuilder(c.client),
@@ -31,15 +34,19 @@ func (c *Connector) Asset(ctx context.Context, asset *v2.AssetRef) (string, io.R
 	return "", nil, nil
 }
 
-// New creates a Connector with an unauthenticated Tableau client. Authentication
-// happens later in Validate() when the SDK is ready to perform work.
-func New(ctx context.Context, serverPath, siteID, accessTokenName, accessTokenSecret, apiVersion string) (*Connector, error) {
-	tableauClient, err := client.New(ctx, serverPath, siteID, accessTokenName, accessTokenSecret, apiVersion)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create client: %w", err)
+// New creates a Connector from the provided configuration. Authentication is
+// deferred to Validate() to avoid duplicate Tableau sessions.
+func New(ctx context.Context, tc *cfg.Tableau, _ *cli.ConnectorOpts) (connectorbuilder.ConnectorBuilderV2, []connectorbuilder.Opt, error) {
+	if err := field.Validate(cfg.Config, tc); err != nil {
+		return nil, nil, err
 	}
 
-	return &Connector{client: tableauClient}, nil
+	tableauClient, err := client.New(ctx, tc.ServerPath, tc.SiteId, tc.AccessTokenName, tc.AccessTokenSecret, tc.ApiVersion)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create client: %w", err)
+	}
+
+	return &Connector{client: tableauClient}, nil, nil
 }
 
 func (c *Connector) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) {

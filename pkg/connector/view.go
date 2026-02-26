@@ -6,7 +6,6 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
-	"github.com/conductorone/baton-sdk/pkg/pagination"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-tableau/pkg/client"
 )
@@ -59,67 +58,67 @@ func viewResource(view *client.View, parentResourceID *v2.ResourceId) (*v2.Resou
 	return ret, nil
 }
 
-func (v *viewBuilder) List(ctx context.Context, parentId *v2.ResourceId, _ *pagination.Token) ([]*v2.Resource, string, annotations.Annotations, error) {
+func (v *viewBuilder) List(ctx context.Context, parentId *v2.ResourceId, _ rs.SyncOpAttrs) ([]*v2.Resource, *rs.SyncOpResults, error) {
 	if parentId == nil {
-		return nil, "", nil, nil
+		return nil, nil, nil
 	}
 
 	workbookID := parentId.Resource
 	views, _, err := v.client.GetWorkbookViews(ctx, workbookID)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to list views for workbook %s: %w", workbookID, err)
+		return nil, nil, fmt.Errorf("failed to list views for workbook %s: %w", workbookID, err)
 	}
 
 	var rv []*v2.Resource
 	for _, view := range views {
 		viewResource, err := viewResource(view, parentId)
 		if err != nil {
-			return nil, "", nil, fmt.Errorf("failed to create view resource for %s: %w", view.Name, err)
+			return nil, nil, fmt.Errorf("failed to create view resource for %s: %w", view.Name, err)
 		}
 		rv = append(rv, viewResource)
 	}
 
-	return rv, "", nil, nil
+	return rv, nil, nil
 }
 
-func (v *viewBuilder) Entitlements(_ context.Context, _ *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
-	return nil, "", nil, nil
+func (v *viewBuilder) Entitlements(_ context.Context, _ *v2.Resource, _ rs.SyncOpAttrs) ([]*v2.Entitlement, *rs.SyncOpResults, error) {
+	return nil, nil, nil
 }
 
-func (v *viewBuilder) StaticEntitlements(_ context.Context, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
-	return staticPermissionEntitlements(viewCapabilities, "View", resourceTypeWorkbook), "", nil, nil
+func (v *viewBuilder) StaticEntitlements(_ context.Context, _ rs.SyncOpAttrs) ([]*v2.Entitlement, *rs.SyncOpResults, error) {
+	return staticPermissionEntitlements(viewCapabilities, "View", resourceTypeWorkbook), nil, nil
 }
 
-func (v *viewBuilder) Grants(ctx context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
+func (v *viewBuilder) Grants(ctx context.Context, resource *v2.Resource, _ rs.SyncOpAttrs) ([]*v2.Grant, *rs.SyncOpResults, error) {
 	if resource.ParentResourceId != nil {
 		workbookID := resource.ParentResourceId.Resource
 		showTabs, err := v.getShowTabs(ctx, workbookID)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 		if showTabs {
 			// View permissions are inherited from the workbook: create proxy grants so
 			// the SDK expander propagates the workbook's permissions here.
 			rv, err := inheritedGrants(resource, resourceTypeWorkbook, workbookID, viewCapabilities, workbookCapabilities)
 			if err != nil {
-				return nil, "", nil, err
+				return nil, nil, err
 			}
-			return rv, "", nil, nil
+			return rv, nil, nil
 		}
 	}
 
 	viewID := resource.Id.Resource
 	permissions, _, err := v.client.GetViewPermissions(ctx, viewID)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	rv, err := grantsFromCapabilities(resource, permissions, viewCapabilities)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
-	return rv, "", nil, nil
+	return rv, nil, nil
 }
 
 func (v *viewBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
