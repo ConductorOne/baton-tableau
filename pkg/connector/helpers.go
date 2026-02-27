@@ -31,7 +31,7 @@ const (
 	ViewUnderlyingData = "ViewUnderlyingData"
 	WebAuthoring       = "WebAuthoring"
 	RunExplainData     = "RunExplainData"
-	ExportXml          = "ExportXml"
+	ExportXML          = "ExportXml"
 	ExtractRefresh     = "ExtractRefresh"
 	ChangeHierarchy    = "ChangeHierarchy"
 	ChangePermissions  = "ChangePermissions"
@@ -51,7 +51,7 @@ var allCapabilitiesMap = map[string]string{
 	ViewUnderlyingData: "Download Full Data",
 	WebAuthoring:       "Web Edit",
 	RunExplainData:     "Run Explain Data",
-	ExportXml:          "Download/Save A Copy",
+	ExportXML:          "Download/Save A Copy",
 	ExtractRefresh:     "Extract Refresh",
 	ChangeHierarchy:    "Move",
 	ChangePermissions:  "Set Permissions",
@@ -84,7 +84,7 @@ func pickProjectCapabilities(keys ...string) map[string]string {
 
 // capabilityByDisplaySlug is the reverse of allCapabilitiesMap and projectCapabilitiesMap:
 // maps display name slugs back to Tableau API capability names.
-// e.g., "View" → "Read", "Publish" → "Write", "Add Comments" → "AddComment"
+// e.g., "View" → "Read", "Publish" → "Write", "Add Comments" → "AddComment".
 var capabilityByDisplaySlug = func() map[string]string {
 	m := make(map[string]string, len(allCapabilitiesMap)+len(projectCapabilitiesMap))
 	for capName, slug := range allCapabilitiesMap {
@@ -125,19 +125,6 @@ func staticPermissionEntitlements(capabilities map[string]string, resourceLabel 
 	return rv
 }
 
-// slugFromMap returns the display slug for capName using m as a lookup table.
-// Falls back to allCapabilitiesMap, then capName itself if nothing matches.
-func slugFromMap(m map[string]string, capName string) string {
-	if m != nil {
-		if slug, ok := m[capName]; ok {
-			return slug
-		}
-	}
-	if slug, ok := allCapabilitiesMap[capName]; ok {
-		return slug
-	}
-	return capName
-}
 
 // grantsFromCapabilities creates grants from Tableau grantee capabilities.
 //
@@ -154,7 +141,10 @@ func grantsFromCapabilities(resource *v2.Resource, grantees []*client.GranteeCap
 				continue
 			}
 
-			ownSlug := slugFromMap(ownSlugMap, capability.Name)
+			ownSlug, ok := ownSlugMap[capability.Name]
+			if !ok {
+				continue
+			}
 
 			if grantee.User != nil {
 				principalID, err := rs.NewResourceID(resourceTypeUser, grantee.User.ID)
@@ -319,7 +309,6 @@ func revokePermission(
 // unsupportedFilterRoles are legacy Tableau Server roles that the REST API
 // filter endpoint does not recognize (returns NullPointerException).
 var unsupportedFilterRoles = map[string]bool{
-	readOnly:          true,
 	siteAdministrator: true,
 }
 

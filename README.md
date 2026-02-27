@@ -47,7 +47,7 @@ baton resources
 - **Groups** — Tableau groups with membership information
 - **Licenses** — License tiers (Creator, Explorer, Viewer, Unlicensed) with role-based assignment
 - **Projects** — Tableau projects with Read/Write permission assignments for users and groups
-- **Workbooks** — Tableau workbooks with 10 granular permission assignments for users and groups
+- **Workbooks** — Tableau workbooks with 15 granular permission assignments for users and groups
 - **Views** — Individual dashboards/views with granular permissions (inherited from workbook when `showTabs=true`)
 
 `baton-tableau` supports the following provisioning operations:
@@ -60,7 +60,7 @@ baton resources
 | Licenses | Grant/Revoke | Assign/remove license tiers by updating site role |
 | Groups | Grant/Revoke | Add/remove users from groups |
 | Projects | Grant/Revoke | Assign/remove Read, Write permissions for users and groups |
-| Workbooks | Grant/Revoke | Assign/remove 10 granular permissions for users and groups |
+| Workbooks | Grant/Revoke | Assign/remove 15 granular permissions for users and groups |
 | Views | Grant/Revoke | Assign/remove view permissions for users and groups (when `showTabs=false`) |
 
 ## Important Notes
@@ -107,7 +107,7 @@ When creating users via provisioning, the `--create-account-profile` JSON accept
 | Field | Required | Description |
 |-------|----------|-------------|
 | `email` | Yes | Email address used as the user's login name |
-| `siteRole` | Yes | Site role: `Creator`, `Explorer`, `ExplorerCanPublish`, `SiteAdministratorExplorer`, `SiteAdministratorCreator`, `Viewer`, `Unlicensed` |
+| `siteRole` | Yes | Site role: `Creator`, `Explorer`, `ExplorerCanPublish`, `SiteAdministratorExplorer`, `SiteAdministratorCreator`, `Viewer`, `Unlicensed`. See [Tableau REST API Site Roles](https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_new_site_roles.htm) |
 | `withMFA` | No | If `true`, creates user with `TableauIDWithMFA` authentication. Default: `false` (uses SAML IDP) |
 | `idpConfigurationName` | No | Name of a specific SAML IDP when multiple are configured. Auto-selected if only one exists |
 

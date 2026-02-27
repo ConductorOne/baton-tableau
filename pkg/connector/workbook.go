@@ -21,7 +21,7 @@ var workbookCapabilities = pickCapabilities(
 	ViewUnderlyingData,
 	WebAuthoring,
 	RunExplainData,
-	ExportXml,
+	ExportXML,
 	Write,
 	Delete,
 	ChangePermissions,

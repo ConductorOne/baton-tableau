@@ -63,6 +63,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -81,66 +82,23 @@ import (
 // =============================================================================
 
 // Client is an HTTP client for the Tableau REST API.
-// Authentication is deferred until Authenticate() is called explicitly.
-// The Baton SDK spawns the connector in two processes (main + gRPC subprocess),
-// so logging in during New() would create two Tableau sessions from the same PAT,
-// causing session conflicts on Tableau Cloud.
 type Client struct {
-	httpClient        *uhttp.BaseHttpClient
-	authToken         string
-	siteId            string
-	baseUrl           string
-	contentUrl        string
-	accessTokenName   string
-	accessTokenSecret string
+	httpClient *uhttp.BaseHttpClient
+	authToken  string
+	siteId     string
+	baseUrl    string
 }
 
-// New creates a Tableau API client without authenticating. It builds the base URL
-// from serverPath and apiVersion, initializes the HTTP transport, and stores the
-// PAT credentials for later use. Authentication is intentionally deferred to
-// Authenticate() to avoid creating duplicate Tableau sessions — the Baton SDK
-// instantiates the connector twice (main process + gRPC subprocess), but only
-// the subprocess needs an active session.
-func New(ctx context.Context, serverPath, siteID, accessTokenName, accessTokenSecret, apiVersion string) (*Client, error) {
-	baseURL, err := BuildBaseURL(serverPath, apiVersion)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build base URL: %w", err)
-	}
-
-	httpClient, err := uhttp.NewClient(ctx, uhttp.WithLogger(true, ctxzap.Extract(ctx)))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create http client: %w", err)
-	}
-
-	baseHttpClient, err := uhttp.NewBaseHttpClientWithContext(ctx, httpClient)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create base http client: %w", err)
-	}
-
+// NewClient creates a Client with an existing auth token and site ID.
+// This matches the original v0.1.7 pattern where Login() happens in the
+// connector layer and the resulting credentials are passed to the client.
+func NewClient(authToken, siteID, baseURL string, httpClient *uhttp.BaseHttpClient) *Client {
 	return &Client{
-		httpClient:        baseHttpClient,
-		baseUrl:           baseURL,
-		contentUrl:        siteID,
-		accessTokenName:   accessTokenName,
-		accessTokenSecret: accessTokenSecret,
-	}, nil
-}
-
-// Authenticate signs in to the Tableau REST API using the stored PAT credentials
-// and populates the auth token and site ID needed for subsequent API calls.
-// This is called from Connector.Validate(), which the SDK invokes once per sync
-// cycle before any resource operations. If already authenticated, calling this
-// again will replace the existing session with a new one.
-func (c *Client) Authenticate(ctx context.Context) error {
-	credentials, err := Login(ctx, c.httpClient, c.baseUrl, c.contentUrl, c.accessTokenSecret, c.accessTokenName)
-	if err != nil {
-		return fmt.Errorf("failed to login: %w", err)
+		httpClient: httpClient,
+		authToken:  authToken,
+		siteId:     siteID,
+		baseUrl:    baseURL,
 	}
-
-	c.authToken = credentials.Token
-	c.siteId = credentials.Site.ID
-
-	return nil
 }
 
 // =============================================================================
@@ -148,13 +106,19 @@ func (c *Client) Authenticate(ctx context.Context) error {
 // =============================================================================
 
 // Login authenticates with a Personal Access Token and returns session credentials.
-func Login(ctx context.Context, httpClient *uhttp.BaseHttpClient, baseUrl, contentUrl, accessToken, tokenName string) (*Credentials, error) {
-	loginURL, err := buildURL(baseUrl, authSignin)
+// Creates its own HTTP client for the login request, matching the original v0.1.7 pattern.
+func Login(ctx context.Context, baseUrl, contentUrl, accessToken, tokenName string) (*Credentials, error) {
+	httpClient, err := uhttp.NewClient(ctx, uhttp.WithLogger(true, ctxzap.Extract(ctx)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create http client for login: %w", err)
+	}
+
+	loginURL, err := url.JoinPath(baseUrl, authSignin)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build login URL: %w", err)
 	}
 
-	body := map[string]any{
+	body, err := json.Marshal(map[string]any{
 		"credentials": map[string]any{
 			"personalAccessTokenName":   tokenName,
 			"personalAccessTokenSecret": accessToken,
@@ -162,24 +126,27 @@ func Login(ctx context.Context, httpClient *uhttp.BaseHttpClient, baseUrl, conte
 				"contentUrl": contentUrl,
 			},
 		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal login body: %w", err)
 	}
 
-	req, err := httpClient.NewRequest(ctx, http.MethodPost, loginURL,
-		uhttp.WithAcceptJSONHeader(),
-		uhttp.WithContentTypeJSONHeader(),
-		uhttp.WithJSONBody(body),
-	)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(string(body)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create login request: %w", err)
 	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
 
-	var res credentialsResponse
-	resp, err := httpClient.Do(req, uhttp.WithJSONResponse(&res))
-	if resp != nil {
-		defer resp.Body.Close()
-	}
+	resp, err := httpClient.Do(req) //nolint:gosec // baseUrl is operator-configured via CLI flags, not end-user input
 	if err != nil {
 		return nil, fmt.Errorf("login failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var res credentialsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, fmt.Errorf("failed to decode login response: %w", err)
 	}
 
 	return &res.Credentials, nil
@@ -670,16 +637,17 @@ func (c *Client) ListEnabledIdpConfigurations(ctx context.Context) ([]*IdpConfig
 }
 
 // FindIdpConfigurationByName returns the enabled IDP configuration matching the given name
-// (case-insensitive). Returns nil if no match is found.
+// (case-insensitive). Searches all enabled configs, not just SAML/OPENID.
+// Returns nil if no match is found.
 func (c *Client) FindIdpConfigurationByName(ctx context.Context, name string) (*IdpConfiguration, annotations.Annotations, error) {
-	configs, annos, err := c.ListEnabledIdpConfigurations(ctx)
+	configs, annos, err := c.ListIdpConfigurations(ctx)
 	if err != nil {
 		return nil, annos, err
 	}
 
 	lowerName := strings.ToLower(name)
 	for _, cfg := range configs {
-		if strings.ToLower(cfg.IdpConfigurationName) == lowerName {
+		if cfg.Enabled && strings.ToLower(cfg.IdpConfigurationName) == lowerName {
 			return cfg, annos, nil
 		}
 	}

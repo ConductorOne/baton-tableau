@@ -10,8 +10,10 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/cli"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	"github.com/conductorone/baton-sdk/pkg/field"
+	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/conductorone/baton-tableau/pkg/client"
 	cfg "github.com/conductorone/baton-tableau/pkg/config"
+	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 )
 
 type Connector struct {
@@ -34,17 +36,32 @@ func (c *Connector) Asset(ctx context.Context, asset *v2.AssetRef) (string, io.R
 	return "", nil, nil
 }
 
-// New creates a Connector from the provided configuration. Authentication is
-// deferred to Validate() to avoid duplicate Tableau sessions.
 func New(ctx context.Context, tc *cfg.Tableau, _ *cli.ConnectorOpts) (connectorbuilder.ConnectorBuilderV2, []connectorbuilder.Opt, error) {
 	if err := field.Validate(cfg.Config, tc); err != nil {
 		return nil, nil, err
 	}
 
-	tableauClient, err := client.New(ctx, tc.ServerPath, tc.SiteId, tc.AccessTokenName, tc.AccessTokenSecret, tc.ApiVersion)
+	baseURL, err := client.BuildBaseURL(tc.ServerPath, tc.ApiVersion)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create client: %w", err)
+		return nil, nil, fmt.Errorf("failed to build base URL: %w", err)
 	}
+
+	httpClient, err := uhttp.NewClient(ctx, uhttp.WithLogger(true, ctxzap.Extract(ctx)))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	credentials, err := client.Login(ctx, baseURL, tc.SiteId, tc.AccessTokenSecret, tc.AccessTokenName)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to login: %w", err)
+	}
+
+	baseHttpClient, err := uhttp.NewBaseHttpClientWithContext(ctx, httpClient)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create base http client: %w", err)
+	}
+
+	tableauClient := client.NewClient(credentials.Token, credentials.Site.ID, baseURL, baseHttpClient)
 
 	return &Connector{client: tableauClient}, nil, nil
 }
@@ -68,8 +85,9 @@ func (c *Connector) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error)
 				"siteRole": {
 					DisplayName: "Site Role",
 					Required:    true,
-					Description: `The role to assign to the user on the site. Possible values are:
-					Creator, Explorer, ExplorerCanPublish, SiteAdministratorExplorer, SiteAdministratorCreator, Unlicensed, or Viewer.`,
+				Description: `The role to assign to the user on the site. Valid values:
+				Creator, Explorer, ExplorerCanPublish, SiteAdministratorExplorer, SiteAdministratorCreator, Viewer, or Unlicensed.
+				See: https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_new_site_roles.htm`,
 					Field: &v2.ConnectorAccountCreationSchema_Field_StringField{
 						StringField: &v2.ConnectorAccountCreationSchema_StringField{},
 					},
@@ -103,15 +121,7 @@ func (c *Connector) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error)
 	}, nil
 }
 
-// Validate authenticates with the Tableau API and verifies the connection by
-// fetching the site details. The SDK calls this once at the start of each sync
-// cycle, making it the right place to perform deferred authentication — only the
-// gRPC subprocess reaches this point, so exactly one Tableau session is created.
 func (c *Connector) Validate(ctx context.Context) (annotations.Annotations, error) {
-	if err := c.client.Authenticate(ctx); err != nil {
-		return nil, fmt.Errorf("failed to authenticate: %w", err)
-	}
-
 	_, annos, err := c.client.GetSite(ctx)
 	if err != nil {
 		return annos, fmt.Errorf("failed to validate connection: %w", err)
