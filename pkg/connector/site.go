@@ -14,6 +14,8 @@ import (
 	"go.uber.org/zap"
 )
 
+// Valid Tableau REST API site roles.
+// See: https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_new_site_roles.htm
 const (
 	siteAdministrator         = "SiteAdministrator"
 	siteAdministratorCreator  = "SiteAdministratorCreator"
@@ -24,9 +26,12 @@ const (
 	explorerCanPublish        = "ExplorerCanPublish"
 	viewer                    = "Viewer"
 	unlicensed                = "Unlicensed"
-	readOnly                  = "ReadOnly"
 )
 
+// roles maps Tableau API role names to display slugs.
+// ServerAdministrator is included for sync (Tableau returns it for server-level
+// admins) but cannot be granted via the REST API — it is a server-level role,
+// not a site-level role.
 var roles = map[string]string{
 	siteAdministrator:         "site administrator",
 	siteAdministratorCreator:  "site administrator creator",
@@ -37,7 +42,12 @@ var roles = map[string]string{
 	explorerCanPublish:        "explorer can publish",
 	viewer:                    "viewer",
 	unlicensed:                "unlicensed",
-	readOnly:                  "readonly",
+}
+
+// nonGrantableRoles are roles that can appear during sync but cannot be
+// assigned via the REST API's Update User Site Role endpoint.
+var nonGrantableRoles = map[string]bool{
+	serverAdministrator: true,
 }
 
 type siteBuilder struct {
@@ -142,6 +152,10 @@ func (s *siteBuilder) Grant(ctx context.Context, principal *v2.Resource, entitle
 
 	if apiRoleName == "" {
 		return nil, fmt.Errorf("unknown role: %s", roleName)
+	}
+
+	if nonGrantableRoles[apiRoleName] {
+		return nil, fmt.Errorf("role %q cannot be assigned via the Tableau REST API (server-level role, not site-level)", apiRoleName)
 	}
 
 	annos, err := s.client.UpdateUserSiteRole(ctx, principalID, apiRoleName)

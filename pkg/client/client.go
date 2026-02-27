@@ -81,26 +81,16 @@ import (
 // =============================================================================
 
 // Client is an HTTP client for the Tableau REST API.
-// Authentication is deferred until Authenticate() is called explicitly.
-// The Baton SDK spawns the connector in two processes (main + gRPC subprocess),
-// so logging in during New() would create two Tableau sessions from the same PAT,
-// causing session conflicts on Tableau Cloud.
 type Client struct {
-	httpClient        *uhttp.BaseHttpClient
-	authToken         string
-	siteId            string
-	baseUrl           string
-	contentUrl        string
-	accessTokenName   string
-	accessTokenSecret string
+	httpClient *uhttp.BaseHttpClient
+	authToken  string
+	siteId     string
+	baseUrl    string
+	contentUrl string
 }
 
-// New creates a Tableau API client without authenticating. It builds the base URL
-// from serverPath and apiVersion, initializes the HTTP transport, and stores the
-// PAT credentials for later use. Authentication is intentionally deferred to
-// Authenticate() to avoid creating duplicate Tableau sessions — the Baton SDK
-// instantiates the connector twice (main process + gRPC subprocess), but only
-// the subprocess needs an active session.
+// New creates an authenticated Tableau API client. It builds the base URL,
+// initializes the HTTP transport, and signs in with the provided PAT credentials.
 func New(ctx context.Context, serverPath, siteID, accessTokenName, accessTokenSecret, apiVersion string) (*Client, error) {
 	baseURL, err := BuildBaseURL(serverPath, apiVersion)
 	if err != nil {
@@ -117,30 +107,18 @@ func New(ctx context.Context, serverPath, siteID, accessTokenName, accessTokenSe
 		return nil, fmt.Errorf("failed to create base http client: %w", err)
 	}
 
-	return &Client{
-		httpClient:        baseHttpClient,
-		baseUrl:           baseURL,
-		contentUrl:        siteID,
-		accessTokenName:   accessTokenName,
-		accessTokenSecret: accessTokenSecret,
-	}, nil
-}
-
-// Authenticate signs in to the Tableau REST API using the stored PAT credentials
-// and populates the auth token and site ID needed for subsequent API calls.
-// This is called from Connector.Validate(), which the SDK invokes once per sync
-// cycle before any resource operations. If already authenticated, calling this
-// again will replace the existing session with a new one.
-func (c *Client) Authenticate(ctx context.Context) error {
-	credentials, err := Login(ctx, c.httpClient, c.baseUrl, c.contentUrl, c.accessTokenSecret, c.accessTokenName)
+	credentials, err := Login(ctx, baseHttpClient, baseURL, siteID, accessTokenSecret, accessTokenName)
 	if err != nil {
-		return fmt.Errorf("failed to login: %w", err)
+		return nil, fmt.Errorf("failed to authenticate: %w", err)
 	}
 
-	c.authToken = credentials.Token
-	c.siteId = credentials.Site.ID
-
-	return nil
+	return &Client{
+		httpClient: baseHttpClient,
+		baseUrl:    baseURL,
+		contentUrl: siteID,
+		authToken:  credentials.Token,
+		siteId:     credentials.Site.ID,
+	}, nil
 }
 
 // =============================================================================
@@ -670,16 +648,17 @@ func (c *Client) ListEnabledIdpConfigurations(ctx context.Context) ([]*IdpConfig
 }
 
 // FindIdpConfigurationByName returns the enabled IDP configuration matching the given name
-// (case-insensitive). Returns nil if no match is found.
+// (case-insensitive). Searches all enabled configs, not just SAML/OPENID.
+// Returns nil if no match is found.
 func (c *Client) FindIdpConfigurationByName(ctx context.Context, name string) (*IdpConfiguration, annotations.Annotations, error) {
-	configs, annos, err := c.ListEnabledIdpConfigurations(ctx)
+	configs, annos, err := c.ListIdpConfigurations(ctx)
 	if err != nil {
 		return nil, annos, err
 	}
 
 	lowerName := strings.ToLower(name)
 	for _, cfg := range configs {
-		if strings.ToLower(cfg.IdpConfigurationName) == lowerName {
+		if cfg.Enabled && strings.ToLower(cfg.IdpConfigurationName) == lowerName {
 			return cfg, annos, nil
 		}
 	}

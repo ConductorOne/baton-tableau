@@ -16,7 +16,7 @@ var projectCapabilities = pickProjectCapabilities(Read, Write)
 
 // projectDefaultWorkbookCapabilities maps Tableau capability names to their display
 // slugs for project default-workbook-permission entitlements.
-// e.g. "Read" → "Workbook / View", "Filter" → "Workbook / Filter"
+// e.g. "Read" → "Workbook / View", "Filter" → "Workbook / Filter".
 var projectDefaultWorkbookCapabilities = func() map[string]string {
 	m := make(map[string]string, len(workbookCapabilities))
 	for capName, displayName := range workbookCapabilities {
@@ -155,7 +155,7 @@ func (p *projectBuilder) Grants(ctx context.Context, resource *v2.Resource, opts
 
 		defaultWorkbookPerms, _, err := p.client.GetProjectDefaultWorkbookPermissions(ctx, projectID)
 		if err != nil {
-			return rv, nil, err
+			return nil, nil, err
 		}
 
 		defaultWorkbookRv, err := grantsFromCapabilities(resource, defaultWorkbookPerms, projectDefaultWorkbookCapabilities)
