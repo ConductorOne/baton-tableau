@@ -22,7 +22,7 @@ var licensesMap = map[string]string{
 }
 var RolesPerLicense = map[string][]string{
 	creator:    {creator, siteAdministratorCreator},
-	explorer:   {explorer, siteAdministratorExplorer, explorerCanPublish, readOnly, siteAdministrator},
+	explorer:   {explorer, siteAdministratorExplorer, explorerCanPublish, siteAdministrator},
 	viewer:     {viewer},
 	unlicensed: {unlicensed},
 }

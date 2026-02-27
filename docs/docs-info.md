@@ -20,7 +20,7 @@
    — Groups (Tableau groups with membership information)  
    — Licenses (license tiers: Creator, Explorer, Viewer, Unlicensed — users are assigned based on their site role)  
    — Projects (Tableau projects with Read/Write permission assignments for users and groups)  
-   — Workbooks (Tableau workbooks with granular permission assignments: Read, Write, Filter, ViewComments, AddComment, ExportImage, ExportData, ShareView, ViewUnderlyingData, WebAuthoring)  
+   — Workbooks (Tableau workbooks with 15 granular permission assignments for users and groups — see [Tableau REST API Permissions](https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_permissions.htm))  
    — Views (individual dashboards/views within workbooks, with the same granular permissions as workbooks minus Write)
 
    > **Note**: When a workbook has `showTabs=true`, view-level permissions are **inherited from the workbook**. The connector syncs these inherited grants by reading the parent workbook's permissions and filtering to view-applicable capabilities. Entitlements are always created for views regardless of `showTabs`.
@@ -33,7 +33,7 @@
    — License assignments (grant/revoke license tiers — Creator, Explorer, Viewer — by updating the user's site role)  
    — Group memberships (add/remove users from groups)  
    — Project permission assignments (grant/revoke Read, Write permissions for users and groups)  
-   — Workbook permission assignments (grant/revoke all 10 workbook permissions for users and groups)  
+   — Workbook permission assignments (grant/revoke all 15 workbook permissions for users and groups)  
    — View permission assignments (grant/revoke view permissions for users and groups, only when parent workbook has `showTabs=false`)
 
    > **Note**: Group-based permission assignments on projects, workbooks, and views are supported. Grant expansion propagates permissions through group memberships.
@@ -118,10 +118,24 @@
 
 - **Description**: The Tableau site the connector is authenticated against. Acts as the top-level resource in the hierarchy.
 - **Children**: Users, Groups, Projects
-- **Entitlements**: Site roles (SiteAdministrator, SiteAdministratorCreator, SiteAdministratorExplorer, ServerAdministrator, Creator, Explorer, ExplorerCanPublish, Viewer, ReadOnly, Unlicensed)
+- **Entitlements**: Site roles per [Tableau REST API Site Roles](https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_new_site_roles.htm)
 - **Provisioning**:
   - Grant: Update a user's site role
   - Revoke: Set a user's site role to Unlicensed
+
+> **Site roles** (per [Tableau REST API documentation](https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_new_site_roles.htm)):
+>
+> | Site Role | API String | Grant/Revoke | Notes |
+> |---|---|---|---|
+> | Site Administrator Creator | `SiteAdministratorCreator` | Yes | |
+> | Site Administrator Explorer | `SiteAdministratorExplorer` | Yes | |
+> | Creator | `Creator` | Yes | |
+> | Explorer | `Explorer` | Yes | |
+> | Explorer Can Publish | `ExplorerCanPublish` | Yes | |
+> | Viewer | `Viewer` | Yes | |
+> | Unlicensed | `Unlicensed` | Yes | |
+> | Site Administrator | `SiteAdministrator` | Yes | Legacy role, maps to SiteAdministratorExplorer |
+> | Server Administrator | `ServerAdministrator` | Sync only | Server-level role, appears in sync but cannot be assigned via the REST API |
 
 ### Users
 
@@ -132,7 +146,7 @@
   - Delete users (remove from site)
 - **Account creation schema** (fields sent in the `--create-account-profile` JSON):
   - `email` **(required)** — The email address of the user. This is used as the user's login name in the Tableau API. This field was changed from optional to required because the Tableau API requires it for user creation.
-  - `siteRole` **(required)** — The site role to assign. Valid values: `Creator`, `Explorer`, `ExplorerCanPublish`, `SiteAdministratorExplorer`, `SiteAdministratorCreator`, `Unlicensed`, `Viewer`.
+  - `siteRole` **(required)** — The site role to assign. Valid values: `Creator`, `Explorer`, `ExplorerCanPublish`, `SiteAdministratorExplorer`, `SiteAdministratorCreator`, `Viewer`, `Unlicensed`. See [Tableau REST API Site Roles](https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_new_site_roles.htm).
   - `withMFA` (optional, default: `false`) — If `true`, creates the user with `TableauIDWithMFA` authentication (Tableau's built-in MFA). If `false`, the connector will auto-select a SAML IDP configuration.
   - `idpConfigurationName` (optional) — The name of a specific SAML IDP configuration to use. Only needed when multiple SAML IDPs are configured on the site. If only one SAML IDP exists, it is selected automatically. If no SAML IDPs exist, set `withMFA=true`.
 - **Profile attributes** (synced from Tableau):
@@ -183,11 +197,11 @@
 > | License | Site Roles Included |
 > |---|---|
 > | Creator | `Creator`, `SiteAdministratorCreator` |
-> | Explorer | `Explorer`, `SiteAdministratorExplorer`, `ExplorerCanPublish`, `ReadOnly`, `SiteAdministrator` |
+> | Explorer | `Explorer`, `SiteAdministratorExplorer`, `ExplorerCanPublish`, `SiteAdministrator` |
 > | Viewer | `Viewer` |
 > | Unlicensed | `Unlicensed` |
 >
-> The `ReadOnly` and `SiteAdministrator` roles are legacy Tableau Server roles that map to the Explorer license. These roles cannot be used with the Tableau REST API filter endpoint, so the connector fetches all users and filters client-side when processing Explorer license grants.
+> `SiteAdministrator` is a legacy role (maps to `SiteAdministratorExplorer`) that cannot be used with the Tableau REST API filter endpoint, so the connector fetches all users and filters client-side when processing Explorer license grants. See [Tableau REST API Site Roles](https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_new_site_roles.htm) for the full role reference.
 
 > **Important — License Revoke Constraints**: Revoking a license (setting a user to "Unlicensed") will fail if the user belongs to a group with "Grant role on sign in" configured. Tableau enforces that a user's site role cannot be lower than the minimum site role required by any group they belong to. The error message from Tableau will be: *"Site role of link user that belongs to license upon login cannot be lower than minimum site role of group"*. To resolve this, remove the user from the constraining group first, then revoke the license.
 
@@ -206,19 +220,28 @@
 
 - **Description**: Tableau workbooks that contain views/dashboards
 - **Children**: Views
-- **Entitlements** (10 permissions):
-  - `Read` — View the workbook
-  - `Write` — Modify the workbook
-  - `Filter` — Apply filters to views in the workbook
-  - `ViewComments` — View comments on views
-  - `AddComment` — Add comments to views
-  - `ExportImage` — Export views as images
-  - `ExportData` — Export underlying data
-  - `ShareView` — Share views with other users
-  - `ViewUnderlyingData` — View the underlying data of views
-  - `WebAuthoring` — Edit views in the browser
+- **Entitlements** (15 permissions) — see [Tableau REST API Permissions](https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_permissions.htm):
+
+  | Tableau Capability | Entitlement Slug | Description |
+  |---|---|---|
+  | Read | View | View the workbook |
+  | Write | Overwrite | Overwrite/save changes to the workbook |
+  | Delete | Delete | Delete the workbook |
+  | Filter | Filter | Apply filters to views |
+  | ViewComments | View Comments | View comments on views |
+  | AddComment | Add Comments | Add comments to views |
+  | ExportImage | Download Image/PDF | Export views as images or PDF |
+  | ExportData | Download Summary Data | Export summary data |
+  | ShareView | Share Customized | Share customized views |
+  | ViewUnderlyingData | Download Full Data | View and download underlying data |
+  | WebAuthoring | Web Edit | Edit views in the browser |
+  | RunExplainData | Run Explain Data | Run Explain Data feature |
+  | ExportXml | Download/Save A Copy | Download or save a copy of the workbook |
+  | ChangeHierarchy | Move | Move the workbook between projects |
+  | ChangePermissions | Set Permissions | Modify permissions on the workbook |
+
 - **Provisioning** (users and groups):
-  - Grant: Assign any of the 10 permissions on a workbook
+  - Grant: Assign any of the 15 permissions on a workbook
   - Revoke: Remove a permission from a workbook
 - **Grant expansion**: When a group has a workbook permission, all group members inherit that permission.
 
@@ -290,11 +313,12 @@
 ### Site Role Grants
 
 - Users with unknown or unexpected site roles (not in the connector's role map) are **skipped** during site grant sync instead of creating malformed grants. A warning is logged.
-- The role map covers: `SiteAdministrator`, `SiteAdministratorCreator`, `SiteAdministratorExplorer`, `ServerAdministrator`, `Creator`, `Explorer`, `ExplorerCanPublish`, `Viewer`, `Unlicensed`, `ReadOnly`.
+- The role map covers all valid [Tableau REST API site roles](https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_new_site_roles.htm): `SiteAdministratorCreator`, `SiteAdministratorExplorer`, `SiteAdministrator`, `Creator`, `Explorer`, `ExplorerCanPublish`, `Viewer`, `Unlicensed`.
+- `ServerAdministrator` is synced (read-only) but grant attempts are blocked — it is a server-level role that cannot be assigned via the sites API.
 
 ### License Grants
 
-- The Explorer license includes `ReadOnly` and `SiteAdministrator` roles (legacy Tableau Server roles). These roles are not supported by the Tableau API's `siteRole` filter, so the connector falls back to fetching all users and filtering client-side for the Explorer license.
+- The Explorer license includes `SiteAdministrator` (legacy role). This role is not supported by the Tableau API's `siteRole` filter, so the connector falls back to fetching all users and filtering client-side for the Explorer license.
 - For Creator, Viewer, and Unlicensed licenses, server-side filtering is used for efficiency.
 
 ### View Grants and showTabs
@@ -329,6 +353,7 @@ This connector uses the Tableau REST API for all operations.
 
 **Documentation:**
 - REST API Reference: https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api.htm
+- Site Roles: https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_new_site_roles.htm
 - Authentication: https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_auth.htm
 - REST API Permissions: https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_permissions.htm
 - Tableau Cloud Permissions (UI, showTabs, capabilities): https://help.tableau.com/current/online/en-us/permissions.htm
@@ -336,3 +361,104 @@ This connector uses the Tableau REST API for all operations.
 **Pagination:**
 - Uses `pageSize` and `pageNumber` query parameters (1-based page numbering, default page size: 100)
 - Responses include a `pagination` object with `pageNumber`, `pageSize`, and `totalAvailable`
+
+---
+
+## Tableau Cloud Test Results
+
+Tested against: `us-east-1.online.tableau.com` (Tableau Cloud)
+
+### Sync
+
+| Test | Result |
+|------|--------|
+| Full sync (fresh c1z) | OK |
+
+### Account Provisioning (Create User)
+
+**By profile fields:**
+
+| Test | Profile Fields | Result |
+|------|---------------|--------|
+| Only required fields | `email` + `siteRole: Viewer` | OK |
+| With MFA | `email` + `siteRole: Explorer` + `withMFA: true` | OK |
+| With IDP name | `email` + `siteRole: Viewer` + `idpConfigurationName: "Tableau with MFA"` | OK |
+| All fields | `email` + `siteRole: ExplorerCanPublish` + `withMFA: true` + `idpConfigurationName` | OK |
+| Creator role + MFA | `email` + `siteRole: Creator` + `withMFA: true` | OK |
+| Invalid IDP name | `idpConfigurationName: "NonExistentIDP"` | Expected error with list of available IDPs |
+
+**By siteRole (create + delete cycle for each valid role):**
+
+| siteRole | Create | Delete | Notes |
+|----------|--------|--------|-------|
+| Viewer | OK | OK | |
+| Explorer | OK | OK | |
+| ExplorerCanPublish | OK | OK | |
+| Creator | OK | OK | |
+| SiteAdministratorExplorer | OK | OK | |
+| SiteAdministratorCreator | OK | OK | |
+| Unlicensed | OK | OK | |
+
+### Site Role Grants
+
+| Site Role | Grant | Revoke | Notes |
+|-----------|-------|--------|-------|
+| site administrator creator | OK | OK | |
+| site administrator explorer | OK | OK | |
+| creator | OK | OK | |
+| explorer | OK | OK | |
+| explorer can publish | OK | OK | |
+| viewer | OK | OK | |
+| unlicensed | OK | OK | |
+| site administrator | OK | OK | Legacy role (maps to SiteAdministratorExplorer) |
+| server administrator | Blocked | N/A | Read-only: server-level role, cannot be assigned via REST API |
+
+### Group Membership
+
+| Test | Result | Notes |
+|------|--------|-------|
+| Grant member (Test Group) | OK | |
+| Revoke member (Test Group) | OK | |
+| Grant member (All Users) | OK | Returns AlreadyExists (auto-managed) |
+
+### Workbook Permissions (15 capabilities)
+
+| Permission Slug | Grant (User) | Revoke (User) | Grant (Group) | Revoke (Group) |
+|----------------|-------------|--------------|--------------|----------------|
+| View | OK | OK | OK | OK |
+| Overwrite | OK | OK | OK | OK |
+| Delete | OK | OK | - | - |
+| Filter | OK | OK | - | - |
+| View Comments | OK | OK | - | - |
+| Add Comments | OK | OK | - | - |
+| Download Image/PDF | OK | OK | - | - |
+| Download Summary Data | OK | OK | - | - |
+| Share Customized | OK | OK | - | - |
+| Download Full Data | OK | OK | - | - |
+| Web Edit | OK | OK | - | - |
+| Run Explain Data | OK | OK | - | - |
+| Download/Save A Copy | OK | OK | - | - |
+| Move | OK | OK | - | - |
+| Set Permissions | OK | OK | - | - |
+
+### Project Permissions (2 project + 15 default workbook)
+
+| Permission Slug | Grant (User) | Revoke (User) |
+|----------------|-------------|--------------|
+| View | OK | OK |
+| Publish | OK | OK |
+| Workbook / View | OK | OK |
+| Workbook / Overwrite | OK | OK |
+| Workbook / Delete | OK | OK |
+| Workbook / Filter | OK | OK |
+| Workbook / View Comments | OK | OK |
+| Workbook / Add Comments | OK | OK |
+| Workbook / Download Image/PDF | OK | OK |
+| Workbook / Download Summary Data | OK | OK |
+| Workbook / Share Customized | OK | OK |
+| Workbook / Download Full Data | OK | OK |
+| Workbook / Web Edit | OK | OK |
+| Workbook / Run Explain Data | OK | OK |
+| Workbook / Download/Save A Copy | OK | OK |
+| Workbook / Move | OK | OK |
+| Workbook / Set Permissions | OK | OK |
