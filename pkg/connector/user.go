@@ -125,26 +125,23 @@ func (u *userBuilder) CreateAccount(ctx context.Context, accountInfo *v2.Account
 		return nil, nil, nil, fmt.Errorf("siteRole not found in profile")
 	}
 
-	var idpID string
-	var err error
-	// Tableau API defaults to MFA authentication when IdpConfigurationId is empty.
-	// withMFA=true: Leave IdpConfigurationId empty to use Tableau's MFA default.
-	// withMFA=false: Select a SAML IDP configuration from the available IDPs.
-	withMFA, _ := pMap["withMFA"].(bool)
-	if !withMFA {
-		idpConfigName, _ := pMap["idpConfigurationName"].(string)
-		idpID, err = u.selectIDPConfiguration(ctx, idpConfigName)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to select IDP configuration: %w", err)
-		}
-	}
-
 	reqBody := client.CreateUserRequest{
 		Email:    email,
 		SiteRole: siteRole,
 	}
-	if idpID != "" {
-		reqBody.IdpConfigurationId = idpID
+
+	withMFA, _ := pMap["withMFA"].(bool)
+	if withMFA {
+		reqBody.AuthSetting = "TableauIDWithMFA"
+	} else {
+		idpConfigName, _ := pMap["idpConfigurationName"].(string)
+		idpID, err := u.selectIDPConfiguration(ctx, idpConfigName)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to select IDP configuration: %w", err)
+		}
+		if idpID != "" {
+			reqBody.IdpConfigurationId = idpID
+		}
 	}
 
 	user, _, err := u.client.AddUserToSite(ctx, reqBody)
@@ -169,7 +166,7 @@ func (u *userBuilder) selectIDPConfiguration(ctx context.Context, idpConfigName 
 			return "", fmt.Errorf("failed to find IDP configuration: %w", err)
 		}
 		if cfg == nil {
-			allConfigs, _, listErr := u.client.ListEnabledIdpConfigurations(ctx)
+			allConfigs, _, listErr := u.client.ListIdpConfigurations(ctx)
 			if listErr != nil {
 				return "", fmt.Errorf("IDP '%s' not found and failed to list alternatives: %w", idpConfigName, listErr)
 			}
