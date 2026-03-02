@@ -151,10 +151,12 @@ func Login(ctx context.Context, httpClient *http.Client, baseUrl, contentUrl, ac
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := httpClient.Do(req) //nolint:gosec // baseUrl is operator-configured via CLI flags
+	if resp != nil {
+		defer resp.Body.Close()
+	}
 	if err != nil {
 		return nil, fmt.Errorf("login failed: %w", err)
 	}
-	defer resp.Body.Close()
 
 	var res credentialsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
