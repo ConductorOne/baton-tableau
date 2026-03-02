@@ -91,10 +91,6 @@ type Client struct {
 
 // New creates an authenticated Tableau API client.
 func New(ctx context.Context, serverPath, siteID, accessTokenName, accessTokenSecret, apiVersion string) (*Client, error) {
-	if apiVersion == "" {
-		apiVersion = DefaultAPIVersion
-	}
-
 	baseURL, err := BuildBaseURL(serverPath, apiVersion)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build base URL: %w", err)
