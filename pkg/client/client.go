@@ -158,6 +158,14 @@ func Login(ctx context.Context, httpClient *http.Client, baseUrl, contentUrl, ac
 		return nil, fmt.Errorf("login failed: %w", err)
 	}
 
+	if resp.StatusCode != http.StatusOK {
+		detail := extractTableauError(resp)
+		if detail != "" {
+			return nil, fmt.Errorf("login failed (HTTP %d): %s", resp.StatusCode, detail)
+		}
+		return nil, fmt.Errorf("login failed with HTTP status %d", resp.StatusCode)
+	}
+
 	var res credentialsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		return nil, fmt.Errorf("failed to decode login response: %w", err)
