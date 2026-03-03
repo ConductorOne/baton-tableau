@@ -3,20 +3,19 @@ package connector
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
-	"github.com/conductorone/baton-sdk/pkg/pagination"
-	"github.com/conductorone/baton-tableau/pkg/tableau"
-	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
-	"go.uber.org/zap"
-
 	ent "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
+	"github.com/conductorone/baton-tableau/pkg/client"
+	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
+	"go.uber.org/zap"
 )
 
+// Valid Tableau REST API site roles.
+// See: https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_new_site_roles.htm
 const (
 	siteAdministrator         = "SiteAdministrator"
 	siteAdministratorCreator  = "SiteAdministratorCreator"
@@ -27,9 +26,12 @@ const (
 	explorerCanPublish        = "ExplorerCanPublish"
 	viewer                    = "Viewer"
 	unlicensed                = "Unlicensed"
-	readOnly                  = "ReadOnly"
 )
 
+// roles maps Tableau API role names to display slugs.
+// ServerAdministrator is included for sync (Tableau returns it for server-level
+// admins) but cannot be granted via the REST API — it is a server-level role,
+// not a site-level role.
 var roles = map[string]string{
 	siteAdministrator:         "site administrator",
 	siteAdministratorCreator:  "site administrator creator",
@@ -40,24 +42,29 @@ var roles = map[string]string{
 	explorerCanPublish:        "explorer can publish",
 	viewer:                    "viewer",
 	unlicensed:                "unlicensed",
-	readOnly:                  "readonly",
 }
 
-type siteResourceType struct {
-	resourceType *v2.ResourceType
-	client       *tableau.Client
+// nonGrantableRoles are roles that can appear during sync but cannot be
+// assigned via the REST API's Update User Site Role endpoint.
+var nonGrantableRoles = map[string]bool{
+	serverAdministrator: true,
 }
 
-func (o *siteResourceType) ResourceType(_ context.Context) *v2.ResourceType {
-	return o.resourceType
+type siteBuilder struct {
+	client *client.Client
+}
+
+func (s *siteBuilder) ResourceType(_ context.Context) *v2.ResourceType {
+	return resourceTypeSite
 }
 
 // Create a new connector resource for a Tableau site.
-func siteResource(site tableau.Site) (*v2.Resource, error) {
+func siteResource(site *client.Site) (*v2.Resource, error) {
 	siteOptions := []rs.ResourceOption{
 		rs.WithAnnotation(
 			&v2.ChildResourceType{ResourceTypeId: resourceTypeUser.Id},
 			&v2.ChildResourceType{ResourceTypeId: resourceTypeGroup.Id},
+			&v2.ChildResourceType{ResourceTypeId: resourceTypeProject.Id},
 		),
 	}
 	ret, err := rs.NewResource(site.Name, resourceTypeSite, site.ID, siteOptions...)
@@ -68,22 +75,22 @@ func siteResource(site tableau.Site) (*v2.Resource, error) {
 	return ret, nil
 }
 
-func (o *siteResourceType) List(ctx context.Context, _ *v2.ResourceId, _ *pagination.Token) ([]*v2.Resource, string, annotations.Annotations, error) {
+func (s *siteBuilder) List(ctx context.Context, _ *v2.ResourceId, _ rs.SyncOpAttrs) ([]*v2.Resource, *rs.SyncOpResults, error) {
 	var rv []*v2.Resource
-	site, err := o.client.GetSite(ctx)
+	site, _, err := s.client.GetSite(ctx)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, fmt.Errorf("failed to get site: %w", err)
 	}
-	sr, err := siteResource(site)
+	siteResource, err := siteResource(site)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, fmt.Errorf("failed to build site resource: %w", err)
 	}
-	rv = append(rv, sr)
+	rv = append(rv, siteResource)
 
-	return rv, "", nil, nil
+	return rv, nil, nil
 }
 
-func (o *siteResourceType) Entitlements(_ context.Context, resource *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
+func (s *siteBuilder) Entitlements(_ context.Context, resource *v2.Resource, _ rs.SyncOpAttrs) ([]*v2.Entitlement, *rs.SyncOpResults, error) {
 	var rv []*v2.Entitlement
 	for _, role := range roles {
 		permissionOptions := []ent.EntitlementOption{
@@ -92,40 +99,44 @@ func (o *siteResourceType) Entitlements(_ context.Context, resource *v2.Resource
 			ent.WithDisplayName(fmt.Sprintf("%s Site %s", resource.DisplayName, role)),
 		}
 
-		permissionEn := ent.NewPermissionEntitlement(resource, role, permissionOptions...)
-		rv = append(rv, permissionEn)
+		permissionEntitlement := ent.NewPermissionEntitlement(resource, role, permissionOptions...)
+		rv = append(rv, permissionEntitlement)
 	}
-	return rv, "", nil, nil
+	return rv, nil, nil
 }
 
-func (o *siteResourceType) Grants(ctx context.Context, resource *v2.Resource, pt *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
-	users, err := o.client.GetPaginatedUsers(ctx)
+func (s *siteBuilder) Grants(ctx context.Context, resource *v2.Resource, opts rs.SyncOpAttrs) ([]*v2.Grant, *rs.SyncOpResults, error) {
+	l := ctxzap.Extract(ctx)
+	users, nextToken, _, err := s.client.GetUsers(ctx, opts.PageToken.Token)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, fmt.Errorf("failed to list users: %w", err)
 	}
+
 	var rv []*v2.Grant
 	for _, user := range users {
 		roleName := roles[user.SiteRole]
 		if roleName == "" {
-			ctxzap.Extract(ctx).Debug("Unknown Tableau Role Name",
-				zap.String("role_name", user.SiteRole),
-				zap.String("user", user.FullName),
+			l.Debug("skipping user with unknown site role",
+				zap.String("site_role", user.SiteRole),
+				zap.String("user_id", user.ID),
+				zap.String("user_name", user.FullName),
 			)
+			continue
 		}
-		userCopy := user
-		ur, err := userResource(&userCopy, resource.Id)
+		userResource, err := userResource(user, resource.Id)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, fmt.Errorf("failed to build user resource for %s: %w", user.ID, err)
 		}
 
-		permissionGrant := grant.NewGrant(resource, roleName, ur.Id)
+		permissionGrant := grant.NewGrant(resource, roleName, userResource.Id)
 		rv = append(rv, permissionGrant)
 	}
-	return rv, "", nil, nil
+
+	return rv, &rs.SyncOpResults{NextPageToken: nextToken}, nil
 }
 
-func (o *siteResourceType) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
-	roleName, err := parseRoleFromEntitlementID(entitlement.Id)
+func (s *siteBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
+	roleName, err := parseEntitlementSlug(entitlement.Id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse role from entitlement ID: %w", err)
 	}
@@ -143,36 +154,31 @@ func (o *siteResourceType) Grant(ctx context.Context, principal *v2.Resource, en
 		return nil, fmt.Errorf("unknown role: %s", roleName)
 	}
 
-	err = o.client.UpdateUserSiteRole(ctx, principalID, apiRoleName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to grant %s role to user %s: %w", roleName, principalID, err)
+	if nonGrantableRoles[apiRoleName] {
+		return nil, fmt.Errorf("role %q cannot be assigned via the Tableau REST API (server-level role, not site-level)", apiRoleName)
 	}
 
-	return nil, nil
+	annos, err := s.client.UpdateUserSiteRole(ctx, principalID, apiRoleName)
+	if err != nil {
+		return annos, fmt.Errorf("failed to grant %s role to user %s: %w", roleName, principalID, err)
+	}
+
+	return annos, nil
 }
 
-func (o *siteResourceType) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
+func (s *siteBuilder) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
 	principalID := grant.Principal.Id.Resource
 
-	err := o.client.UpdateUserSiteRole(ctx, principalID, unlicensed)
+	annos, err := s.client.UpdateUserSiteRole(ctx, principalID, unlicensed)
 	if err != nil {
-		return nil, fmt.Errorf("failed to revoke site role from user %s: %w", principalID, err)
+		return annos, fmt.Errorf("failed to revoke site role from user %s: %w", principalID, err)
 	}
 
-	return nil, nil
+	return annos, nil
 }
 
-func siteBuilder(client *tableau.Client) *siteResourceType {
-	return &siteResourceType{
-		resourceType: resourceTypeSite,
-		client:       client,
+func newSiteBuilder(client *client.Client) *siteBuilder {
+	return &siteBuilder{
+		client: client,
 	}
-}
-
-func parseRoleFromEntitlementID(entitlementID string) (string, error) {
-	parts := strings.Split(entitlementID, ":")
-	if len(parts) != 3 {
-		return "", fmt.Errorf("invalid entitlement ID: %s", entitlementID)
-	}
-	return parts[2], nil
 }

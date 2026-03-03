@@ -4,32 +4,29 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
-	"github.com/conductorone/baton-sdk/pkg/pagination"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
-	"github.com/conductorone/baton-tableau/pkg/tableau"
+	"github.com/conductorone/baton-tableau/pkg/client"
 	"google.golang.org/grpc/codes"
 )
 
-var _ connectorbuilder.AccountManager = &userResourceType{}
+var _ connectorbuilder.AccountManagerV2 = &userBuilder{}
 
-type userResourceType struct {
-	resourceType *v2.ResourceType
-	client       *tableau.Client
+type userBuilder struct {
+	client *client.Client
 }
 
-func (o *userResourceType) ResourceType(_ context.Context) *v2.ResourceType {
-	return o.resourceType
+func (u *userBuilder) ResourceType(_ context.Context) *v2.ResourceType {
+	return resourceTypeUser
 }
 
 // Create a new connector resource for a Tableau user.
-func userResource(user *tableau.User, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
+func userResource(user *client.User, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
 	names := strings.SplitN(user.FullName, " ", 2)
 	var firstName, lastName string
 	switch len(names) {
@@ -40,7 +37,7 @@ func userResource(user *tableau.User, parentResourceID *v2.ResourceId) (*v2.Reso
 		lastName = names[1]
 	}
 
-	profile := map[string]interface{}{
+	profile := map[string]any{
 		"first_name":   firstName,
 		"last_name":    lastName,
 		"login":        user.Email,
@@ -50,9 +47,11 @@ func userResource(user *tableau.User, parentResourceID *v2.ResourceId) (*v2.Reso
 
 	userTraitOptions := []rs.UserTraitOption{
 		rs.WithUserProfile(profile),
-		rs.WithEmail(user.Email, true),
 		rs.WithStatus(v2.UserTrait_Status_STATUS_ENABLED),
-		rs.WithLastLogin(user.LastLogin),
+		rs.WithEmail(user.Email, true),
+	}
+	if user.LastLogin != nil {
+		userTraitOptions = append(userTraitOptions, rs.WithLastLogin(*user.LastLogin))
 	}
 
 	ret, err := rs.NewUserResource(
@@ -61,46 +60,46 @@ func userResource(user *tableau.User, parentResourceID *v2.ResourceId) (*v2.Reso
 		user.ID,
 		userTraitOptions,
 		rs.WithParentResourceID(parentResourceID),
+		rs.WithExternalID(&v2.ExternalId{Id: user.ID}),
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create user resource for %s: %w", user.ID, err)
 	}
 
 	return ret, nil
 }
 
-func (o *userResourceType) List(ctx context.Context, parentId *v2.ResourceId, token *pagination.Token) ([]*v2.Resource, string, annotations.Annotations, error) {
+func (u *userBuilder) List(ctx context.Context, parentId *v2.ResourceId, opts rs.SyncOpAttrs) ([]*v2.Resource, *rs.SyncOpResults, error) {
 	if parentId == nil {
-		return nil, "", nil, nil
+		return nil, nil, nil
 	}
 
-	users, err := o.client.GetPaginatedUsers(ctx)
+	users, nextToken, _, err := u.client.GetUsers(ctx, opts.PageToken.Token)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, fmt.Errorf("failed to list users: %w", err)
 	}
 
 	var rv []*v2.Resource
 	for _, user := range users {
-		userCopy := user
-		ur, err := userResource(&userCopy, parentId)
+		userResource, err := userResource(user, parentId)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, nil, fmt.Errorf("failed to build user resource for %s: %w", user.ID, err)
 		}
-		rv = append(rv, ur)
+		rv = append(rv, userResource)
 	}
 
-	return rv, "", nil, nil
+	return rv, &rs.SyncOpResults{NextPageToken: nextToken}, nil
 }
 
-func (o *userResourceType) Entitlements(_ context.Context, _ *v2.Resource, _ *pagination.Token) ([]*v2.Entitlement, string, annotations.Annotations, error) {
-	return nil, "", nil, nil
+func (u *userBuilder) Entitlements(_ context.Context, _ *v2.Resource, _ rs.SyncOpAttrs) ([]*v2.Entitlement, *rs.SyncOpResults, error) {
+	return nil, nil, nil
 }
 
-func (o *userResourceType) Grants(_ context.Context, _ *v2.Resource, _ *pagination.Token) ([]*v2.Grant, string, annotations.Annotations, error) {
-	return nil, "", nil, nil
+func (u *userBuilder) Grants(_ context.Context, _ *v2.Resource, _ rs.SyncOpAttrs) ([]*v2.Grant, *rs.SyncOpResults, error) {
+	return nil, nil, nil
 }
 
-func (u *userResourceType) CreateAccountCapabilityDetails(ctx context.Context) (*v2.CredentialDetailsAccountProvisioning, annotations.Annotations, error) {
+func (u *userBuilder) CreateAccountCapabilityDetails(ctx context.Context) (*v2.CredentialDetailsAccountProvisioning, annotations.Annotations, error) {
 	return &v2.CredentialDetailsAccountProvisioning{
 		SupportedCredentialOptions: []v2.CapabilityDetailCredentialOption{
 			v2.CapabilityDetailCredentialOption_CAPABILITY_DETAIL_CREDENTIAL_OPTION_NO_PASSWORD,
@@ -109,7 +108,7 @@ func (u *userResourceType) CreateAccountCapabilityDetails(ctx context.Context) (
 	}, nil, nil
 }
 
-func (o *userResourceType) CreateAccount(ctx context.Context, accountInfo *v2.AccountInfo, credentialOptions *v2.LocalCredentialOptions) (
+func (u *userBuilder) CreateAccount(ctx context.Context, accountInfo *v2.AccountInfo, credentialOptions *v2.LocalCredentialOptions) (
 	connectorbuilder.CreateAccountResponse,
 	[]*v2.PlaintextData,
 	annotations.Annotations,
@@ -118,44 +117,41 @@ func (o *userResourceType) CreateAccount(ctx context.Context, accountInfo *v2.Ac
 	pMap := accountInfo.Profile.AsMap()
 	email, ok := pMap["email"].(string)
 	if !ok {
-		return nil, nil, nil, fmt.Errorf("baton-tableau: name not found in profile")
+		return nil, nil, nil, fmt.Errorf("email not found in profile")
 	}
 
 	siteRole, ok := pMap["siteRole"].(string)
 	if !ok {
-		return nil, nil, nil, fmt.Errorf("baton-tableau: siteRole not found in profile")
+		return nil, nil, nil, fmt.Errorf("siteRole not found in profile")
 	}
 
-	var idpID string
-	var err error
-	// Tableau API defaults to MFA authentication when IdpConfigurationId is empty.
-	// withMFA=true: Leave IdpConfigurationId empty to use Tableau's MFA default.
-	// withMFA=false: Select a SAML IDP configuration from the available IDPs.
-	withMFA, _ := pMap["withMFA"].(bool)
-	if !withMFA {
-		idpConfigName, _ := pMap["idpConfigurationName"].(string)
-		idpID, err = o.selectIDPConfiguration(ctx, idpConfigName)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("baton-tableau: failed to select IDP configuration: %w", err)
-		}
-	}
-
-	reqBody := tableau.CreateUserRequest{
+	reqBody := client.CreateUserRequest{
 		Email:    email,
 		SiteRole: siteRole,
 	}
-	if idpID != "" {
-		reqBody.IdpConfigurationId = idpID
+
+	withMFA, _ := pMap["withMFA"].(bool)
+	if withMFA {
+		reqBody.AuthSetting = "TableauIDWithMFA"
+	} else {
+		idpConfigName, _ := pMap["idpConfigurationName"].(string)
+		idpID, err := u.selectIDPConfiguration(ctx, idpConfigName)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to select IDP configuration: %w", err)
+		}
+		if idpID != "" {
+			reqBody.IdpConfigurationId = idpID
+		}
 	}
 
-	user, err := o.client.AddUserToSite(ctx, reqBody)
+	user, _, err := u.client.AddUserToSite(ctx, reqBody)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("baton-tableau: failed to create user %s: %w", email, err)
+		return nil, nil, nil, fmt.Errorf("failed to create user %s: %w", email, err)
 	}
 
 	resource, err := userResource(user, nil)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("baton-tableau: failed to parse user resource for %s: %w", email, err)
+		return nil, nil, nil, fmt.Errorf("failed to parse user resource for %s: %w", email, err)
 	}
 
 	return &v2.CreateAccountResponse_SuccessResult{
@@ -163,74 +159,62 @@ func (o *userResourceType) CreateAccount(ctx context.Context, accountInfo *v2.Ac
 	}, nil, nil, nil
 }
 
-func (o *userResourceType) selectIDPConfiguration(ctx context.Context, idpConfigName string) (string, error) {
-	idpConfigs, err := o.client.ListIdpConfigurations(ctx)
-	if err != nil {
-		return "", fmt.Errorf("baton-tableau: failed to list IDP configurations: %w", err)
-	}
-
-	allowedIdps := []string{"SAML", "OPENID"}
-	var enabledConfigs []tableau.IdpConfiguration
-	for i := range idpConfigs {
-		isAllowedIDP := slices.Contains(allowedIdps, strings.ToUpper(idpConfigs[i].AuthSetting))
-		if isAllowedIDP && idpConfigs[i].Enabled {
-			enabledConfigs = append(enabledConfigs, idpConfigs[i])
-		}
-	}
-
-	if len(enabledConfigs) == 0 {
-		return "", fmt.Errorf("baton-tableau: you need to pass the MFA flag since no IDP is configured in Tableau")
-	}
-
+func (u *userBuilder) selectIDPConfiguration(ctx context.Context, idpConfigName string) (string, error) {
 	if idpConfigName != "" {
-		selectedConfig, err := findIDPByName(enabledConfigs, idpConfigName)
+		cfg, _, err := u.client.FindIdpConfigurationByName(ctx, idpConfigName)
 		if err != nil {
-			return "", uhttp.WrapErrors(codes.InvalidArgument, fmt.Sprintf("IDP configuration '%s' not found", idpConfigName), buildMultipleIDPError(enabledConfigs))
+			return "", fmt.Errorf("failed to find IDP configuration: %w", err)
 		}
-		return selectedConfig.IdpConfigurationId, nil
+		if cfg == nil {
+			allConfigs, _, listErr := u.client.ListIdpConfigurations(ctx)
+			if listErr != nil {
+				return "", fmt.Errorf("IDP '%s' not found and failed to list alternatives: %w", idpConfigName, listErr)
+			}
+			return "", uhttp.WrapErrors(codes.InvalidArgument,
+				fmt.Sprintf("IDP configuration '%s' not found", idpConfigName),
+				buildAvailableIDPsError(allConfigs))
+		}
+		return cfg.IdpConfigurationId, nil
 	}
 
-	if len(enabledConfigs) == 1 {
-		return enabledConfigs[0].IdpConfigurationId, nil
-	}
-
-	return "", uhttp.WrapErrors(codes.InvalidArgument, "multiple IDPs available", buildMultipleIDPError(enabledConfigs))
-}
-
-func (o *userResourceType) Delete(ctx context.Context, resourceId *v2.ResourceId) (annotations.Annotations, error) {
-	userID := resourceId.Resource
-	err := o.client.RemoveUserFromSite(ctx, userID)
+	enabledConfigs, _, err := u.client.ListEnabledIdpConfigurations(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("baton-tableau: failed to delete user %s: %w", resourceId.Resource, err)
+		return "", fmt.Errorf("failed to list IDP configurations: %w", err)
 	}
 
-	return nil, nil
+	switch len(enabledConfigs) {
+	case 0:
+		return "", nil
+	case 1:
+		return enabledConfigs[0].IdpConfigurationId, nil
+	default:
+		return "", uhttp.WrapErrors(codes.InvalidArgument, "multiple IDPs available, specify idpConfigurationName", buildAvailableIDPsError(enabledConfigs))
+	}
 }
 
-func userBuilder(client *tableau.Client) *userResourceType {
-	return &userResourceType{
-		resourceType: resourceTypeUser,
-		client:       client,
+func (u *userBuilder) Delete(ctx context.Context, resourceId *v2.ResourceId) (annotations.Annotations, error) {
+	userID := resourceId.Resource
+	annos, err := u.client.RemoveUserFromSite(ctx, userID)
+	if err != nil {
+		return annos, fmt.Errorf("failed to delete user %s: %w", resourceId.Resource, err)
+	}
+
+	return annos, nil
+}
+
+func newUserBuilder(client *client.Client) *userBuilder {
+	return &userBuilder{
+		client: client,
 	}
 }
 
-func findIDPByName(configs []tableau.IdpConfiguration, name string) (*tableau.IdpConfiguration, error) {
-	lowerName := strings.ToLower(name)
-	for i := range configs {
-		if strings.ToLower(configs[i].IdpConfigurationName) == lowerName {
-			return &configs[i], nil
-		}
-	}
-	return nil, fmt.Errorf("IDP configuration with name '%s' not found", name)
-}
-
-func buildMultipleIDPError(configs []tableau.IdpConfiguration) error {
-	msg := fmt.Sprintf(`baton-tableau: multiple IDP configurations found (%d available). Please specify idpConfigurationName in the account profile. Available IDPs:
-`, len(configs))
-
-	for _, config := range configs {
-		msg += fmt.Sprintf("  - \"%s\" (ID: %s)\n", config.IdpConfigurationName, config.IdpConfigurationId)
+// buildAvailableIDPsError formats an actionable error listing the given IDP configurations.
+func buildAvailableIDPsError(configs []*client.IdpConfiguration) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Please specify idpConfigurationName in the account profile. Available IDPs (%d):\n", len(configs))
+	for _, cfg := range configs {
+		fmt.Fprintf(&b, "  - %q (ID: %s)\n", cfg.IdpConfigurationName, cfg.IdpConfigurationId)
 	}
 
-	return errors.New(msg)
+	return errors.New(b.String())
 }

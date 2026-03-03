@@ -30,13 +30,14 @@ var (
 	SiteID = field.StringField(
 		"site-id",
 		field.WithDisplayName("Site ID"),
-		field.WithDescription("On Tableau Server, this is referred to as Site ID. On Tableau Cloud"),
+		field.WithDescription("Site ID (content URL) of the Tableau site to connect to"),
 	)
 
 	APIVersion = field.StringField(
 		"api-version",
 		field.WithDisplayName("API Version"),
 		field.WithDescription("API version of your Tableau Server or Tableau Cloud instance"),
+		field.WithDefaultValue("3.27"),
 	)
 
 	ConfigurationFields = []field.SchemaField{
@@ -46,17 +47,11 @@ var (
 		SiteID,
 		APIVersion,
 	}
-
-	// FieldRelationships defines relationships between the ConfigurationFields that can be automatically validated.
-	// For example, a username and password can be required together, or an access token can be
-	// marked as mutually exclusive from the username password pair.
-	FieldRelationships = []field.SchemaFieldRelationship{}
 )
 
 //go:generate go run -tags=generate ./gen
 var Config = field.NewConfiguration(
 	ConfigurationFields,
-	field.WithConstraints(FieldRelationships...),
 	field.WithConnectorDisplayName("Tableau"),
 	field.WithHelpUrl("/docs/baton/tableau"),
 	field.WithIconUrl("/static/app-icons/tableau.svg"),

@@ -1,0 +1,156 @@
+package connector
+
+import (
+	"context"
+	"fmt"
+
+	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
+	"github.com/conductorone/baton-sdk/pkg/annotations"
+	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
+	"github.com/conductorone/baton-tableau/pkg/client"
+)
+
+var viewCapabilities = pickCapabilities(
+	Read,
+	Filter,
+	ViewComments,
+	AddComment,
+	ExportImage,
+	ExportData,
+	ShareView,
+	ViewUnderlyingData,
+	WebAuthoring,
+	Delete,
+	ChangePermissions,
+)
+
+type viewBuilder struct {
+	client *client.Client
+}
+
+func (v *viewBuilder) ResourceType(_ context.Context) *v2.ResourceType {
+	return resourceTypeView
+}
+
+// getShowTabs checks whether a workbook has showTabs enabled by calling the
+// Tableau API directly. When showTabs is true, view permissions are inherited
+// from the workbook and cannot be managed individually.
+func (v *viewBuilder) getShowTabs(ctx context.Context, workbookID string) (bool, error) {
+	workbook, _, err := v.client.GetWorkbook(ctx, workbookID)
+	if err != nil {
+		return false, fmt.Errorf("failed to get workbook %s: %w", workbookID, err)
+	}
+
+	return workbook.ShowTabs == "true", nil
+}
+
+func viewResource(view *client.View, parentResourceID *v2.ResourceId) (*v2.Resource, error) {
+	ret, err := rs.NewResource(
+		view.Name,
+		resourceTypeView,
+		view.ID,
+		rs.WithParentResourceID(parentResourceID),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create view resource: %w", err)
+	}
+
+	return ret, nil
+}
+
+func (v *viewBuilder) List(ctx context.Context, parentId *v2.ResourceId, _ rs.SyncOpAttrs) ([]*v2.Resource, *rs.SyncOpResults, error) {
+	if parentId == nil {
+		return nil, nil, nil
+	}
+
+	workbookID := parentId.Resource
+	views, _, err := v.client.GetWorkbookViews(ctx, workbookID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to list views for workbook %s: %w", workbookID, err)
+	}
+
+	var rv []*v2.Resource
+	for _, view := range views {
+		viewResource, err := viewResource(view, parentId)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to create view resource for %s: %w", view.Name, err)
+		}
+		rv = append(rv, viewResource)
+	}
+
+	return rv, nil, nil
+}
+
+func (v *viewBuilder) Entitlements(_ context.Context, _ *v2.Resource, _ rs.SyncOpAttrs) ([]*v2.Entitlement, *rs.SyncOpResults, error) {
+	return nil, nil, nil
+}
+
+func (v *viewBuilder) StaticEntitlements(_ context.Context, _ rs.SyncOpAttrs) ([]*v2.Entitlement, *rs.SyncOpResults, error) {
+	return staticPermissionEntitlements(viewCapabilities, "View", resourceTypeWorkbook), nil, nil
+}
+
+func (v *viewBuilder) Grants(ctx context.Context, resource *v2.Resource, _ rs.SyncOpAttrs) ([]*v2.Grant, *rs.SyncOpResults, error) {
+	if resource.ParentResourceId != nil {
+		workbookID := resource.ParentResourceId.Resource
+		showTabs, err := v.getShowTabs(ctx, workbookID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if showTabs {
+			// View permissions are inherited from the workbook: create proxy grants so
+			// the SDK expander propagates the workbook's permissions here.
+			rv, err := inheritedGrants(resource, resourceTypeWorkbook, workbookID, viewCapabilities, workbookCapabilities)
+			if err != nil {
+				return nil, nil, err
+			}
+			return rv, nil, nil
+		}
+	}
+
+	viewID := resource.Id.Resource
+	permissions, _, err := v.client.GetViewPermissions(ctx, viewID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	rv, err := grantsFromCapabilities(resource, permissions, viewCapabilities)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return rv, nil, nil
+}
+
+func (v *viewBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
+	if entitlement.Resource.ParentResourceId != nil {
+		showTabs, err := v.getShowTabs(ctx, entitlement.Resource.ParentResourceId.Resource)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check showTabs for grant: %w", err)
+		}
+		if showTabs {
+			return nil, fmt.Errorf("cannot grant view permission: parent workbook has showTabs enabled, permissions are inherited from the workbook")
+		}
+	}
+
+	return grantPermission(ctx, principal, entitlement, v.client.AddViewPermission, v.client.AddViewGroupPermission)
+}
+
+func (v *viewBuilder) Revoke(ctx context.Context, g *v2.Grant) (annotations.Annotations, error) {
+	if g.Entitlement.Resource.ParentResourceId != nil {
+		showTabs, err := v.getShowTabs(ctx, g.Entitlement.Resource.ParentResourceId.Resource)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check showTabs for revoke: %w", err)
+		}
+		if showTabs {
+			return nil, fmt.Errorf("cannot revoke view permission: parent workbook has showTabs enabled, permissions are inherited from the workbook")
+		}
+	}
+
+	return revokePermission(ctx, g, v.client.DeleteViewPermission, v.client.DeleteViewGroupPermission)
+}
+
+func newViewBuilder(client *client.Client) *viewBuilder {
+	return &viewBuilder{
+		client: client,
+	}
+}

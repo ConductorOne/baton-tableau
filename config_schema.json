@@ -129,14 +129,16 @@
     {
       "name": "site-id",
       "displayName": "Site ID",
-      "description": "On Tableau Server, this is referred to as Site ID. On Tableau Cloud",
+      "description": "Site ID (content URL) of the Tableau site to connect to",
       "stringField": {}
     },
     {
       "name": "api-version",
       "displayName": "API Version",
       "description": "API version of your Tableau Server or Tableau Cloud instance",
-      "stringField": {}
+      "stringField": {
+        "defaultValue": "3.27"
+      }
     }
   ],
   "displayName": "Tableau",
