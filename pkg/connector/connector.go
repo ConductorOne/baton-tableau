@@ -18,6 +18,10 @@ type Connector struct {
 	client *client.Client
 }
 
+func (c *Connector) Close() error {
+	return nil
+}
+
 func (c *Connector) ResourceSyncers(ctx context.Context) []connectorbuilder.ResourceSyncerV2 {
 	return []connectorbuilder.ResourceSyncerV2{
 		newUserBuilder(c.client),
