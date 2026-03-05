@@ -229,6 +229,9 @@ func (c *Client) AddUserToSite(ctx context.Context, user CreateUserRequest) (*Us
 		"name":     user.Email,
 		"siteRole": user.SiteRole,
 	}
+	if user.AuthSetting != "" {
+		userMap["authSetting"] = user.AuthSetting
+	}
 	if user.IdpConfigurationId != "" {
 		userMap["idpConfigurationId"] = user.IdpConfigurationId
 	}
@@ -624,6 +627,9 @@ func (c *Client) DeleteViewGroupPermission(ctx context.Context, viewID, groupID,
 // =============================================================================
 
 // ListIdpConfigurations returns IDP configurations for the site.
+// Returns an empty list if the endpoint is not available (HTTP 404), which
+// can happen when the Tableau site has no external IDP integration or the
+// API version does not support this endpoint.
 func (c *Client) ListIdpConfigurations(ctx context.Context) ([]*IdpConfiguration, annotations.Annotations, error) {
 	urlListIdpConfigurations, err := c.buildSiteURL(pathIdpConfigurations)
 	if err != nil {
@@ -633,6 +639,9 @@ func (c *Client) ListIdpConfigurations(ctx context.Context) ([]*IdpConfiguration
 	var res idpConfigurationsResponse
 	annos, err := c.doRequest(ctx, http.MethodGet, urlListIdpConfigurations, &res, nil)
 	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return nil, annos, nil
+		}
 		return nil, nil, err
 	}
 
