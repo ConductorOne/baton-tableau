@@ -196,7 +196,7 @@ func inheritedGrants(resource *v2.Resource, parentResourceType *v2.ResourceType,
 		rv = append(rv, grant.NewGrant(resource, ownSlug, parentPrincipalID,
 			grant.WithAnnotation(&v2.GrantExpandable{
 				EntitlementIds: []string{parentEntitlementID},
-				Shallow:        true,
+				Shallow:        false,
 			}),
 		))
 	}
