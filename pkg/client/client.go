@@ -150,7 +150,7 @@ func Login(ctx context.Context, httpClient *http.Client, baseUrl, contentUrl, ac
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := httpClient.Do(req) //nolint:gosec // baseUrl is operator-configured via CLI flags
+	resp, err := httpClient.Do(req)
 	if resp != nil {
 		defer resp.Body.Close()
 	}
