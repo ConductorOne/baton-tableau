@@ -30,7 +30,7 @@ The Tableau connector supports [automatic account provisioning and deprovisionin
 
 Tableau uses a permission inheritance model that affects how access is synced and provisioned:
 
-- **Projects with `LockedToProject`**: When a project's content permissions are set to `LockedToProject`, workbooks inside that project inherit the project's permissions. The connector syncs these inherited permissions as grants on the individual workbooks, with group membership fully expanded so each user appears as a principal.
+- **Projects with `LockedToProject`**: When a project's content permissions are set to `LockedToProject`, workbooks inside that project inherit the project's permissions and cannot be granted or revoked independently — permissions must be changed at the project level instead.
 
 - **Workbooks with `showTabs=true`**: Views (dashboards) inside these workbooks inherit their permissions from the workbook. View-level permissions cannot be granted or revoked independently — attempting to do so returns a clear error. Use the workbook entitlement instead.
 
