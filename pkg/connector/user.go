@@ -141,6 +141,11 @@ func (u *userBuilder) CreateAccount(ctx context.Context, accountInfo *v2.Account
 		}
 		if idpID != "" {
 			reqBody.IdpConfigurationId = idpID
+		} else if authSetting, _ := pMap["authSetting"].(string); authSetting != "" {
+			// Fallback for environments where site-auth-configurations is unavailable (e.g. older
+			// on-premises Tableau Server <2023.3). The caller can set authSetting directly
+			// (e.g. "SAML", "OPENID") to control the auth method without IDP discovery.
+			reqBody.AuthSetting = authSetting
 		}
 	}
 
