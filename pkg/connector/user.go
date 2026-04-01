@@ -166,7 +166,8 @@ func (u *userBuilder) selectIDPConfiguration(ctx context.Context, idpConfigName 
 		if err != nil {
 			if status.Code(err) == codes.NotFound {
 				return "", uhttp.WrapErrors(codes.InvalidArgument,
-					fmt.Sprintf("IDP configuration '%s' cannot be resolved: the site-auth-configurations endpoint is unavailable on this server; upgrade to Tableau Server 2023.3+ (API 3.22+) or remove idpConfigurationName", idpConfigName))
+					fmt.Sprintf("IDP configuration '%s' cannot be resolved: site-auth-configurations endpoint unavailable;"+
+						" upgrade to Tableau Server 2023.3+ (API 3.22+) or remove idpConfigurationName", idpConfigName))
 			}
 			return "", fmt.Errorf("failed to find IDP configuration: %w", err)
 		}
