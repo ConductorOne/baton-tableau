@@ -627,9 +627,9 @@ func (c *Client) DeleteViewGroupPermission(ctx context.Context, viewID, groupID,
 // =============================================================================
 
 // ListIdpConfigurations returns IDP configurations for the site.
-// Returns an empty list if the endpoint is not available (HTTP 404), which
-// can happen when the Tableau site has no external IDP integration or the
-// API version does not support this endpoint.
+// Returns an error (codes.NotFound) if the endpoint is unavailable, which
+// can happen on older on-premises Tableau Server (<2023.3 / API <3.22).
+// Callers are responsible for deciding how to handle the unavailable case.
 func (c *Client) ListIdpConfigurations(ctx context.Context) ([]*IdpConfiguration, annotations.Annotations, error) {
 	urlListIdpConfigurations, err := c.buildSiteURL(pathIdpConfigurations)
 	if err != nil {
@@ -639,10 +639,7 @@ func (c *Client) ListIdpConfigurations(ctx context.Context) ([]*IdpConfiguration
 	var res idpConfigurationsResponse
 	annos, err := c.doRequest(ctx, http.MethodGet, urlListIdpConfigurations, &res, nil)
 	if err != nil {
-		if status.Code(err) == codes.NotFound {
-			return nil, annos, nil
-		}
-		return nil, nil, err
+		return nil, annos, err
 	}
 
 	return res.SiteAuthConfigurations.SiteAuthConfiguration, annos, nil

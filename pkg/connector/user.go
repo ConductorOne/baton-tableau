@@ -13,6 +13,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/conductorone/baton-tableau/pkg/client"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var _ connectorbuilder.AccountManagerV2 = &userBuilder{}
@@ -141,11 +142,6 @@ func (u *userBuilder) CreateAccount(ctx context.Context, accountInfo *v2.Account
 		}
 		if idpID != "" {
 			reqBody.IdpConfigurationId = idpID
-		} else if authSetting, _ := pMap["authSetting"].(string); authSetting != "" {
-			// Fallback for environments where site-auth-configurations is unavailable (e.g. older
-			// on-premises Tableau Server <2023.3). The caller can set authSetting directly
-			// (e.g. "SAML", "OPENID") to control the auth method without IDP discovery.
-			reqBody.AuthSetting = authSetting
 		}
 	}
 
@@ -168,6 +164,10 @@ func (u *userBuilder) selectIDPConfiguration(ctx context.Context, idpConfigName 
 	if idpConfigName != "" {
 		cfg, _, err := u.client.FindIdpConfigurationByName(ctx, idpConfigName)
 		if err != nil {
+			if status.Code(err) == codes.NotFound {
+				return "", uhttp.WrapErrors(codes.InvalidArgument,
+					fmt.Sprintf("IDP configuration '%s' cannot be resolved: the site-auth-configurations endpoint is unavailable on this server; upgrade to Tableau Server 2023.3+ (API 3.22+) or remove idpConfigurationName", idpConfigName))
+			}
 			return "", fmt.Errorf("failed to find IDP configuration: %w", err)
 		}
 		if cfg == nil {
@@ -184,6 +184,12 @@ func (u *userBuilder) selectIDPConfiguration(ctx context.Context, idpConfigName 
 
 	enabledConfigs, _, err := u.client.ListEnabledIdpConfigurations(ctx)
 	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			// Endpoint unavailable on older Tableau Server (<2023.3 / API <3.22).
+			// No idpConfigurationName was requested, so preserve original behavior:
+			// proceed with no auth fields and let Tableau use the site default.
+			return "", nil
+		}
 		return "", fmt.Errorf("failed to list IDP configurations: %w", err)
 	}
 
