@@ -147,8 +147,8 @@
 - **Account creation schema** (fields sent in the `--create-account-profile` JSON):
   - `email` **(required)** — The email address of the user. This is used as the user's login name in the Tableau API. This field was changed from optional to required because the Tableau API requires it for user creation.
   - `siteRole` **(required)** — The site role to assign. Valid values: `Creator`, `Explorer`, `ExplorerCanPublish`, `SiteAdministratorExplorer`, `SiteAdministratorCreator`, `Viewer`, `Unlicensed`. See [Tableau REST API Site Roles](https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_new_site_roles.htm).
-  - `withMFA` (optional, default: `false`) — If `true`, creates the user with `TableauIDWithMFA` authentication (Tableau's built-in MFA). If `false`, the connector will auto-select a SAML IDP configuration.
-  - `idpConfigurationName` (optional) — The name of a specific SAML IDP configuration to use. Only needed when multiple SAML IDPs are configured on the site. If only one SAML IDP exists, it is selected automatically. If no SAML IDPs exist, set `withMFA=true`.
+  - `withMFA` (optional, default: `false`) — If `true`, creates the user with `TableauIDWithMFA` authentication (Tableau's built-in MFA). If `false` and `idpConfigurationName` is not set, the connector falls back to the Tableau site default authentication — SAML is **not** used unless it is the site default or exactly one SAML IDP is enabled on the site.
+  - `idpConfigurationName` (optional) — The name of a specific SAML IDP configuration to use. Requires Tableau Server 2023.3+ (API 3.22+); setting this field on older servers will return an error. Only needed when multiple SAML IDPs are configured on the site — if exactly one SAML IDP is enabled, it is selected automatically. If no SAML IDPs are configured, omit this field; the user will be created with the site default authentication.
 - **Profile attributes** (synced from Tableau):
   - `first_name`: First name (parsed from full name)
   - `last_name`: Last name (parsed from full name)
@@ -307,7 +307,8 @@
 ### Account Creation (User Provisioning)
 
 - **Email is now required** (`Required: true`). Previously it was optional. Customers who have automated user creation without providing an email will see provisioning failures. This change is correct because the Tableau API requires it.
-- When `withMFA=false` (default), the connector auto-selects a SAML IDP. If multiple SAML IDPs are configured, the user must specify `idpConfigurationName` or the request will fail with a list of available IDPs.
+- When neither `withMFA` nor `idpConfigurationName` is set, the connector falls back to the **Tableau site default** authentication. SAML is used automatically only if exactly one SAML IDP is enabled on the site; otherwise no auth fields are set and Tableau applies its configured default.
+- When `withMFA=false` and `idpConfigurationName` is set, the named SAML IDP is used. If multiple SAML IDPs are configured and none is specified, the request will fail with a list of available IDPs. Requires Tableau Server 2023.3+ (API 3.22+).
 - When `withMFA=true`, the user is created with `TableauIDWithMFA` authentication — no IDP lookup is needed.
 
 ### Site Role Grants
