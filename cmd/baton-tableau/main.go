@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/conductorone/baton-sdk/pkg/config"
+	"github.com/conductorone/baton-sdk/pkg/connectorrunner"
 	cfg "github.com/conductorone/baton-tableau/pkg/config"
 	"github.com/conductorone/baton-tableau/pkg/connector"
 )
@@ -18,5 +19,6 @@ func main() {
 		version,
 		cfg.Config,
 		connector.New,
+		connectorrunner.WithDefaultCapabilitiesConnectorBuilderV2(&connector.Connector{}),
 	)
 }
