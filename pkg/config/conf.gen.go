@@ -9,6 +9,7 @@ type Tableau struct {
 	ServerPath string `mapstructure:"server-path"`
 	SiteId string `mapstructure:"site-id"`
 	ApiVersion string `mapstructure:"api-version"`
+	BaseUrl string `mapstructure:"base-url"`
 }
 
 func (c *Tableau) findFieldByTag(tagValue string) (any, bool) {

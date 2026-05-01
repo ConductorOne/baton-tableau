@@ -40,12 +40,21 @@ var (
 		field.WithDefaultValue("3.27"),
 	)
 
+	BaseURL = field.StringField(
+		"base-url",
+		field.WithDisplayName("Base URL"),
+		field.WithDescription("Override the Tableau API URL (for testing)"),
+		field.WithHidden(true),
+		field.WithExportTarget(field.ExportTargetCLIOnly),
+	)
+
 	ConfigurationFields = []field.SchemaField{
 		AccessTokenName,
 		AccessTokenSecret,
 		ServerPath,
 		SiteID,
 		APIVersion,
+		BaseURL,
 	}
 )
 

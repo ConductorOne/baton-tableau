@@ -90,10 +90,18 @@ type Client struct {
 }
 
 // New creates an authenticated Tableau API client.
-func New(ctx context.Context, serverPath, siteID, accessTokenName, accessTokenSecret, apiVersion string) (*Client, error) {
-	baseURL, err := BuildBaseURL(serverPath, apiVersion)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build base URL: %w", err)
+// If baseURLOverride is non-empty, it is used directly instead of building from serverPath/apiVersion.
+// This is intended for testability (e.g. pointing the connector at a local test server).
+func New(ctx context.Context, serverPath, siteID, accessTokenName, accessTokenSecret, apiVersion, baseURLOverride string) (*Client, error) {
+	var baseURL string
+	if baseURLOverride != "" {
+		baseURL = baseURLOverride
+	} else {
+		var err error
+		baseURL, err = BuildBaseURL(serverPath, apiVersion)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build base URL: %w", err)
+		}
 	}
 
 	httpClient, err := uhttp.NewClient(ctx, uhttp.WithLogger(true, ctxzap.Extract(ctx)))
