@@ -47,7 +47,20 @@ func licenseResource(license string) (*v2.Resource, error) {
 		rs.WithRoleProfile(profile),
 	}
 
-	ret, err := rs.NewRoleResource(license, resourceTypeLicense, licenseID, roleTraitOptions)
+	licenseResource := &v2.Resource{
+		Id: &v2.ResourceId{
+			ResourceType: resourceTypeLicense.Id,
+			Resource:     licenseID,
+		},
+	}
+	entitlementID := ent.NewEntitlementID(licenseResource, memberEntitlement)
+
+	ret, err := rs.NewRoleResource(license, resourceTypeLicense, licenseID, roleTraitOptions,
+		rs.WithLicenseProfileTrait(
+			rs.WithLicenseName(license),
+			rs.WithLicenseEntitlementIDs(entitlementID),
+		),
+	)
 	if err != nil {
 		return nil, err
 	}
