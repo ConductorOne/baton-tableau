@@ -20,7 +20,8 @@
         "id": "license",
         "displayName": "License",
         "traits": [
-          "TRAIT_ROLE"
+          "TRAIT_ROLE",
+          "TRAIT_LICENSE_PROFILE"
         ]
       },
       "capabilities": [
