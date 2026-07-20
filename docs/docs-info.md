@@ -319,7 +319,7 @@
 
 - Users with unknown or unexpected site roles (not in the connector's role map) are **skipped** during site grant sync instead of creating malformed grants. A warning is logged.
 - The role map covers all valid [Tableau REST API site roles](https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_new_site_roles.htm): `SiteAdministratorCreator`, `SiteAdministratorExplorer`, `SiteAdministrator`, `Creator`, `Explorer`, `ExplorerCanPublish`, `Viewer`, `Unlicensed`.
-- `ServerAdministrator` is synced (read-only) but grant attempts are blocked — it is a server-level role that cannot be assigned via the sites API.
+- `ServerAdministrator` is synced (read-only) and consumes a Creator license, but it is never a grant target — the assignable license is Creator, and the `ServerAdministrator` role itself cannot be set via the sites API.
 
 ### License Grants
 
