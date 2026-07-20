@@ -12,19 +12,25 @@ type Credentials struct {
 	EstimatedTimeToExpiration string `json:"estimatedTimeToExpiration"`
 }
 
+// Site tier capacities are the purchased seats per license. Tableau returns them
+// as JSON strings and only when caps are configured, so they are string pointers:
+// nil (unset) is distinct from "0" (uncapped tier).
 type Site struct {
-	ID         string `json:"id"`
-	ContentURL string `json:"contentUrl"`
-	Name       string `json:"name"`
+	ID                   string  `json:"id"`
+	ContentURL           string  `json:"contentUrl"`
+	Name                 string  `json:"name"`
+	TierCreatorCapacity  *string `json:"tierCreatorCapacity,omitempty"`
+	TierExplorerCapacity *string `json:"tierExplorerCapacity,omitempty"`
+	TierViewerCapacity   *string `json:"tierViewerCapacity,omitempty"`
 }
 
 type User struct {
-	Email       string    `json:"email"`
-	ID          string    `json:"id"`
-	FullName    string    `json:"fullName"`
-	Name        string    `json:"name"`
-	SiteRole    string    `json:"siteRole"`
-	AuthSetting string    `json:"authSetting"`
+	Email       string     `json:"email"`
+	ID          string     `json:"id"`
+	FullName    string     `json:"fullName"`
+	Name        string     `json:"name"`
+	SiteRole    string     `json:"siteRole"`
+	AuthSetting string     `json:"authSetting"`
 	LastLogin   *time.Time `json:"lastLogin"`
 }
 

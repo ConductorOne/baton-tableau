@@ -180,7 +180,7 @@
 ### Licenses
 
 - **Description**: Tableau license tiers that determine feature access
-- **Traits**: Role trait
+- **Traits**: Role trait + License Profile trait. The License Profile trait is what lets C1 recognize each tier as a license (with seat counts) instead of a generic role.
 - **Static Resources** (4 license types):
   - `Creator` — Full authoring, data prep, and publishing capabilities
   - `Explorer` — Browse, interact, and publish with existing data sources
@@ -188,6 +188,10 @@
   - `Unlicensed` — No access to Tableau site features
 - **Entitlements**:
   - `member` — License is assigned to user (static entitlement)
+- **Seat counts** (License Profile trait):
+  - **Purchased** — read from the site's per-tier capacity fields (`tierCreatorCapacity`, `tierExplorerCapacity`, `tierViewerCapacity`), which the Tableau API returns as JSON strings. Attached only when the value is a positive number; a `0` or absent capacity attaches no seats (avoids rendering "0 of 0"). The `Unlicensed` floor tier is never capped.
+  - **Consumed** — counted server-side per tier via the users `siteRole` filter, reading `pagination.totalAvailable` (one request per tier instead of walking every user page).
+  - Both are attached via `WithLicenseSeats` only when the tier is capped. Seat enrichment is best-effort: a failed site or count call still syncs the license resources, just without seats.
 - **Provisioning**:
   - Grant: Assign a license to a user by updating their site role
   - Revoke: Remove a license by setting the user's site role to Unlicensed
@@ -196,12 +200,12 @@
 >
 > | License | Site Roles Included |
 > |---|---|
-> | Creator | `Creator`, `SiteAdministratorCreator` |
+> | Creator | `Creator`, `SiteAdministratorCreator`, `ServerAdministrator` |
 > | Explorer | `Explorer`, `SiteAdministratorExplorer`, `ExplorerCanPublish`, `SiteAdministrator` |
 > | Viewer | `Viewer` |
 > | Unlicensed | `Unlicensed` |
 >
-> `SiteAdministrator` is a legacy role (maps to `SiteAdministratorExplorer`) that cannot be used with the Tableau REST API filter endpoint, so the connector fetches all users and filters client-side when processing Explorer license grants. See [Tableau REST API Site Roles](https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_new_site_roles.htm) for the full role reference.
+> `SiteAdministrator` is a legacy role (maps to `SiteAdministratorExplorer`) that cannot be used with the Tableau REST API filter endpoint, so the connector fetches all users and filters client-side when processing Explorer license grants. `ServerAdministrator` consumes a Creator license per Tableau's licensing model and is counted under the Creator tier (sync only — it cannot be assigned via the sites API). See [Tableau REST API Site Roles](https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_new_site_roles.htm) for the full role reference.
 
 > **Important — License Revoke Constraints**: Revoking a license (setting a user to "Unlicensed") will fail if the user belongs to a group with "Grant role on sign in" configured. Tableau enforces that a user's site role cannot be lower than the minimum site role required by any group they belong to. The error message from Tableau will be: *"Site role of link user that belongs to license upon login cannot be lower than minimum site role of group"*. To resolve this, remove the user from the constraining group first, then revoke the license.
 
@@ -321,6 +325,7 @@
 
 - The Explorer license includes `SiteAdministrator` (legacy role). This role is not supported by the Tableau API's `siteRole` filter, so the connector falls back to fetching all users and filtering client-side for the Explorer license.
 - For Creator, Viewer, and Unlicensed licenses, server-side filtering is used for efficiency.
+- Consumed-seat counts reuse the same server-side `siteRole` filter but read only `pagination.totalAvailable` per tier (no full user walk). The Explorer count excludes the unfilterable legacy `SiteAdministrator` role, which does not exist on Tableau Cloud.
 
 ### View Grants and showTabs
 
