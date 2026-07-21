@@ -133,7 +133,7 @@ func (l *licenseBuilder) List(ctx context.Context, _ *v2.ResourceId, _ rs.SyncOp
 	consumed := map[string]int64{}
 	countOK := false
 	if hasTierCapacity(site) {
-		consumedByTier, cErr := l.countConsumedByTier(ctx)
+		consumedByTier, cErr := l.countConsumedByTier(ctx, site)
 		if cErr != nil {
 			log.Debug("failed to count consumed license seats; syncing licenses without seat counts", zap.Error(cErr))
 		} else {
@@ -158,11 +158,14 @@ func (l *licenseBuilder) List(ctx context.Context, _ *v2.ResourceId, _ rs.SyncOp
 	return rv, nil, nil
 }
 
-// countConsumedByTier counts users per license tier server-side via the site-role
+// countConsumedByTier counts users server-side per capped tier via the site-role
 // filter, reading the pagination total instead of paging through every user.
-func (l *licenseBuilder) countConsumedByTier(ctx context.Context) (map[string]int64, error) {
+func (l *licenseBuilder) countConsumedByTier(ctx context.Context, site *client.Site) (map[string]int64, error) {
 	consumed := make(map[string]int64, len(licenses))
 	for _, license := range licenses {
+		if _, ok := capacitySeats(licenseCapacity(license, site)); !ok {
+			continue
+		}
 		filterable := filterableRoles(RolesPerLicense[license])
 		if len(filterable) == 0 {
 			continue
