@@ -67,6 +67,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -224,6 +225,28 @@ func (c *Client) GetUsers(ctx context.Context, pageToken string, opts ...ReqOpt)
 
 	nextToken := getNextPageToken(page, res.Pagination)
 	return res.Users.User, nextToken, annos, nil
+}
+
+// CountUsers returns how many site users match the given filters, read from the
+// pagination total without fetching the user records.
+func (c *Client) CountUsers(ctx context.Context, opts ...ReqOpt) (int64, annotations.Annotations, error) {
+	urlCountUsers, err := c.buildSiteURL(pathUsers)
+	if err != nil {
+		return 0, nil, err
+	}
+	applyOpts(urlCountUsers, append([]ReqOpt{withIntParam("pageSize", 1), withIntParam("pageNumber", 1)}, opts...)...)
+
+	var res usersResponse
+	annos, err := c.doRequest(ctx, http.MethodGet, urlCountUsers, &res, nil)
+	if err != nil {
+		return 0, annos, err
+	}
+
+	total, err := strconv.Atoi(res.Pagination.TotalAvailable)
+	if err != nil {
+		return 0, annos, fmt.Errorf("invalid totalAvailable %q: %w", res.Pagination.TotalAvailable, err)
+	}
+	return int64(total), annos, nil
 }
 
 // AddUserToSite creates a new user on the site.

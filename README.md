@@ -45,7 +45,7 @@ baton resources
 - **Sites** — The Tableau site the connector is authenticated against (top-level resource)
 - **Users** — All users on the site with email, site role, auth setting, and last login
 - **Groups** — Tableau groups with membership information
-- **Licenses** — License tiers (Creator, Explorer, Viewer, Unlicensed) with role-based assignment
+- **Licenses** — License tiers (Creator, Explorer, Viewer, Unlicensed) with role-based assignment and purchased/consumed seat counts
 - **Projects** — Tableau projects with Read/Write permission assignments for users and groups
 - **Workbooks** — Tableau workbooks with 15 granular permission assignments for users and groups
 - **Views** — Individual dashboards/views with granular permissions (inherited from workbook when `showTabs=true`)

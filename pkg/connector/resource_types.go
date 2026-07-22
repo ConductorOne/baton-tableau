@@ -30,6 +30,7 @@ var (
 		DisplayName: "License",
 		Traits: []v2.ResourceType_Trait{
 			v2.ResourceType_TRAIT_ROLE,
+			v2.ResourceType_TRAIT_LICENSE_PROFILE,
 		},
 	}
 	resourceTypeProject = &v2.ResourceType{
