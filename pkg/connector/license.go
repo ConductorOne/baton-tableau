@@ -92,9 +92,7 @@ func licenseResource(license string, purchased *string, consumed int64) (*v2.Res
 		"license_id":   licenseID,
 	}
 
-	roleTraitOptions := []rs.RoleTraitOption{
-		rs.WithRoleProfile(profile),
-	}
+	roleTraitOptions := []rs.RoleTraitOption{}
 
 	stub := &v2.Resource{
 		Id: &v2.ResourceId{
@@ -111,6 +109,7 @@ func licenseResource(license string, purchased *string, consumed int64) (*v2.Res
 	}
 
 	ret, err := rs.NewRoleResource(license, resourceTypeLicense, licenseID, roleTraitOptions,
+		rs.WithResourceProfile(profile),
 		rs.WithLicenseProfileTrait(licenseTraitOptions...),
 	)
 	if err != nil {

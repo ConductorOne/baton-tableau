@@ -47,8 +47,6 @@ func userResource(user *client.User, parentResourceID *v2.ResourceId) (*v2.Resou
 	}
 
 	userTraitOptions := []rs.UserTraitOption{
-		rs.WithUserProfile(profile),
-		rs.WithStatus(v2.UserTrait_Status_STATUS_ENABLED),
 		rs.WithEmail(user.Email, true),
 	}
 	if user.LastLogin != nil {
@@ -60,6 +58,8 @@ func userResource(user *client.User, parentResourceID *v2.ResourceId) (*v2.Resou
 		resourceTypeUser,
 		user.ID,
 		userTraitOptions,
+		rs.WithResourceProfile(profile),
+		rs.WithResourceStatus(v2.Status_RESOURCE_STATUS_ENABLED, ""),
 		rs.WithParentResourceID(parentResourceID),
 		rs.WithExternalID(&v2.ExternalId{Id: user.ID}),
 	)
