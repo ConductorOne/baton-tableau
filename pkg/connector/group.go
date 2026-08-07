@@ -40,13 +40,14 @@ func groupResource(group *client.Group, parentResourceID *v2.ResourceId) (*v2.Re
 		"group_name": group.Name,
 	}
 
-	groupTraitOptions := []rs.GroupTraitOption{rs.WithGroupProfile(profile)}
+	groupTraitOptions := []rs.GroupTraitOption{}
 
 	ret, err := rs.NewGroupResource(
 		group.Name,
 		resourceTypeGroup,
 		group.ID,
 		groupTraitOptions,
+		rs.WithResourceProfile(profile),
 		rs.WithParentResourceID(parentResourceID),
 	)
 	if err != nil {
@@ -94,12 +95,7 @@ func (g *groupBuilder) Entitlements(_ context.Context, resource *v2.Resource, _ 
 }
 
 func (g *groupBuilder) Grants(ctx context.Context, resource *v2.Resource, opts rs.SyncOpAttrs) ([]*v2.Grant, *rs.SyncOpResults, error) {
-	groupTrait, err := rs.GetGroupTrait(resource)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get group trait: %w", err)
-	}
-
-	groupId, ok := rs.GetProfileStringValue(groupTrait.Profile, "group_id")
+	groupId, ok := rs.GetProfileStringValue(rs.GetProfile(resource), "group_id")
 	if !ok {
 		return nil, nil, fmt.Errorf("missing group_id in group profile")
 	}
