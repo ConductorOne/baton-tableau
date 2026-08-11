@@ -66,9 +66,41 @@ In the menu bar at the top of the page, click your profile image or initials and
 In the **Personal Access Tokens** area of the page, enter a name for your new token (such as "C1 integration") and then click **Create**. 
 </Step>
 <Step>
-Carefully copy and save the newly generated token and its name. 
+Carefully copy and save the newly generated token and its name. Tableau treats the name and the secret as a pair, so both are required and both must belong to the same token.
 </Step>
 </Steps>
+
+### Or set up a connected app
+
+A personal access token belongs to an individual, so the connector inherits that person's account lifecycle. Tableau also expires every token eventually — after 1 to 365 days depending on your site settings, and after 15 consecutive days of non-use. A connected app is a site-level trust instead, so its secret is rotated deliberately rather than expiring underneath you.
+
+Configure either a personal access token or a connected app, not both.
+
+<Steps>
+<Step>
+Sign into Tableau Cloud as a site administrator and navigate to **Settings** > **Connected Apps**.
+</Step>
+<Step>
+Click **New Connected App** > **Direct Trust**, give it a name, and click **Create**.
+</Step>
+<Step>
+Copy the **Client ID**. Then generate a secret and copy both its **Secret ID** and **Secret Value**. The secret value is shown only once.
+</Step>
+<Step>
+Enable the connected app and grant it these access scopes:
+
+`tableau:content:read`, `tableau:sites:read`, `tableau:users:*`, `tableau:groups:*`, `tableau:projects:*`, `tableau:workbooks:*`, `tableau:permissions:update`, `tableau:permissions:delete`
+
+A missing scope does not fail at sign-in. It surfaces later as a 403 partway through a sync or a provisioning action, so grant the full set.
+</Step>
+<Step>
+Decide which Tableau user the connector acts as, usually a service account. It needs the same site administrator rights a personal access token owner would need. Save its email address.
+</Step>
+</Steps>
+
+<Note>
+Tableau publishes no access scope covering site authentication configurations. Under a connected app, IDP discovery during account creation may fail where it would succeed under a personal access token. The connector already treats that lookup as non-fatal and falls back to the site's default authentication setting.
+</Note>
 
 ### Locate your server path and site ID
 
@@ -133,10 +165,10 @@ Find the **Settings** area of the page and click **Edit**.
 Enter the site ID and server path into the **Site ID** and **Server path** fields.
 </Step>
 <Step>
-Enter the name of the personal access token into the **Access token name** field. 
+If you are using a personal access token, enter its name into the **Access token name** field and its value into the **Access token secret** field.
 </Step>
 <Step>
-Enter the personal access token value into the **Access token secret** field. 
+If you are using a connected app instead, leave the access token fields empty and fill in **Connected app client ID**, **Connected app secret ID**, **Connected app secret value**, and **Connected app username**. The username is the email address of the Tableau user the connector acts as.
 </Step>
 <Step>
 Click **Save**.

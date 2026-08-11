@@ -43,12 +43,41 @@ func New(ctx context.Context, tc *cfg.Tableau, _ *cli.ConnectorOpts) (connectorb
 		return nil, nil, err
 	}
 
-	tableauClient, err := client.New(ctx, tc.ServerPath, tc.SiteId, tc.AccessTokenName, tc.AccessTokenSecret, tc.ApiVersion, tc.BaseUrl)
+	tableauClient, err := client.New(ctx, clientConfig(tc))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create client: %w", err)
 	}
 
 	return &Connector{client: tableauClient}, nil, nil
+}
+
+// clientConfig selects the credential the operator configured. The schema
+// constraints guarantee exactly one complete set is present, so presence of
+// the client ID is enough to distinguish them.
+func clientConfig(tc *cfg.Tableau) client.Config {
+	c := client.Config{
+		ServerPath:      tc.ServerPath,
+		SiteID:          tc.SiteId,
+		APIVersion:      tc.ApiVersion,
+		BaseURLOverride: tc.BaseUrl,
+	}
+
+	if tc.ConnectedAppClientId != "" {
+		c.ConnectedApp = &client.ConnectedApp{
+			ClientID:    tc.ConnectedAppClientId,
+			SecretID:    tc.ConnectedAppSecretId,
+			SecretValue: tc.ConnectedAppSecretValue,
+			Username:    tc.ConnectedAppUsername,
+		}
+		return c
+	}
+
+	c.PersonalAccessToken = &client.PersonalAccessToken{
+		Name:   tc.AccessTokenName,
+		Secret: tc.AccessTokenSecret,
+	}
+
+	return c
 }
 
 func (c *Connector) Metadata(ctx context.Context) (*v2.ConnectorMetadata, error) {

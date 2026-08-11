@@ -86,16 +86,41 @@ baton resources
 
 > **Important**: The user account must have **Site Administrator Explorer** (read-only sync) or **Site Administrator Creator** (sync + provisioning) role. PAT creation must be enabled by a site administrator.
 
+> **Note**: A PAT belongs to an individual, so the connector inherits that account's lifecycle. Tableau also expires every PAT — after 1 to 365 days depending on site settings, and after 15 consecutive days of non-use. For a permanent integration, prefer a connected app.
+
 **Documentation:**
 - Tableau Cloud: https://help.tableau.com/current/online/en-us/security_personal_access_tokens.htm
 - Tableau Server: https://help.tableau.com/current/server/en-us/security_personal_access_tokens.htm
 
+## Connected app (direct trust)
+
+Tableau Cloud only, October 2023 and later. A connected app is a site-level trust rather than a user's token, so its secret is rotated deliberately instead of expiring underneath you.
+
+1. Sign in as a site administrator and go to **Settings** > **Connected Apps**
+2. Click **New Connected App** > **Direct Trust**, name it, and click **Create**
+3. Copy the **Client ID**, then generate a secret and copy its **Secret ID** and **Secret Value** — the value is displayed only once
+4. Enable the app and grant these access scopes:
+   `tableau:content:read`, `tableau:sites:read`, `tableau:users:*`, `tableau:groups:*`, `tableau:projects:*`, `tableau:workbooks:*`, `tableau:permissions:update`, `tableau:permissions:delete`
+5. Choose the Tableau user the connector acts as, and note its email address
+
+> **Important**: A missing scope does not fail at sign-in. It surfaces as a 403 partway through a sync or a provisioning action, so grant the full set. The acting user needs the same site administrator role a PAT owner would.
+
+> **Known gap**: Tableau publishes no scope covering site authentication configurations, so IDP discovery during account creation may fail under a connected app where it succeeds under a PAT. The connector treats that lookup as non-fatal and falls back to the site's default authentication setting.
+
+**Documentation:** https://help.tableau.com/current/online/en-us/connected_apps_direct.htm
+
 ## Configuration Flags
+
+Authenticate with **either** a personal access token **or** a connected app, never both. Each set is all-or-nothing; a partial or mixed configuration is rejected before the connector contacts Tableau.
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--access-token-name` | Yes | Name of the Personal Access Token |
-| `--access-token-secret` | Yes | Secret value of the Personal Access Token |
+| `--access-token-name` | With PAT | Name of the Personal Access Token. Tableau treats the name and secret as a pair, so a stale name alongside a fresh secret fails exactly as an expired token does |
+| `--access-token-secret` | With PAT | Secret value of the Personal Access Token |
+| `--connected-app-client-id` | With connected app | Client ID of a direct trust connected app |
+| `--connected-app-secret-id` | With connected app | Secret ID of the connected app |
+| `--connected-app-secret-value` | With connected app | Secret value of the connected app |
+| `--connected-app-username` | With connected app | Email address of the Tableau user the connector acts as |
 | `--server-path` | Yes | Base URL **without** `/api/<version>` suffix. Examples: `us-east-1.online.tableau.com` (Cloud), `your-server-hostname` (Server) |
 | `--site-id` | No | Content URL of the site (e.g., `mycompany`). Can be found after `/site/` in the browser URL. Leave empty for the default site on Tableau Server |
 | `--api-version` | No | Tableau REST API version (default: `3.27`). Can be changed to match your server's supported version — see [API version reference](https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_versions.htm) |
