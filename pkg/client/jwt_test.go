@@ -69,6 +69,10 @@ func TestNewConnectedAppJWT_Structure(t *testing.T) {
 	require.Len(t, scopes, len(connectedAppScopes))
 	require.Contains(t, scopes, "tableau:users:*")
 	require.Contains(t, scopes, "tableau:groups:*")
+	// Grant sync reads project, workbook, and view ACLs unconditionally, and
+	// Tableau gates those reads behind their own scope. Its absence would not
+	// show up until a sync against a site with content.
+	require.Contains(t, scopes, "tableau:permissions:read")
 }
 
 // TestNewConnectedAppJWT_Signature recomputes the HMAC over the signing input

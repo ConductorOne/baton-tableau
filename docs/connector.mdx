@@ -89,9 +89,9 @@ Copy the **Client ID**. Then generate a secret and copy both its **Secret ID** a
 <Step>
 Enable the connected app and grant it these access scopes:
 
-`tableau:content:read`, `tableau:sites:read`, `tableau:users:*`, `tableau:groups:*`, `tableau:projects:*`, `tableau:workbooks:*`, `tableau:permissions:update`, `tableau:permissions:delete`
+`tableau:content:read`, `tableau:sites:read`, `tableau:users:*`, `tableau:groups:*`, `tableau:projects:*`, `tableau:workbooks:*`, `tableau:permissions:read`, `tableau:permissions:update`, `tableau:permissions:delete`
 
-A missing scope does not fail at sign-in. It surfaces later as a 403 partway through a sync or a provisioning action, so grant the full set.
+A missing scope does not fail at sign-in. It surfaces later as a 403 partway through a sync or a provisioning action, so grant the full set. Check `tableau:permissions:read` twice: grant sync reads project, workbook, and view ACLs on every run, and `tableau:content:read` does not cover those reads.
 </Step>
 <Step>
 Decide which Tableau user the connector acts as, usually a service account. It needs the same site administrator rights a personal access token owner would need. Save its email address.
@@ -99,7 +99,7 @@ Decide which Tableau user the connector acts as, usually a service account. It n
 </Steps>
 
 <Note>
-Tableau publishes no access scope covering site authentication configurations. Under a connected app, IDP discovery during account creation may fail where it would succeed under a personal access token. The connector already treats that lookup as non-fatal and falls back to the site's default authentication setting.
+Tableau publishes no access scope covering site authentication configurations, so under a connected app that lookup is refused where it would succeed under a personal access token. With no **IDP Configuration Name** set, the connector treats the refusal as discovery being unavailable and falls back to the site's default authentication setting. On a site with more than one IDP that differs from personal access token behaviour, which stops and asks you to name one. Set **IDP Configuration Name** explicitly if the choice matters; provisioning then fails with an explicit error instead of guessing.
 </Note>
 
 ### Locate your server path and site ID
@@ -326,8 +326,10 @@ These fields appear in the **provisioning mapping** for the Licenses entitlement
 | **IDP Configuration Name** set, IDP found | Account created with the named IDP |
 | **IDP Configuration Name** set, IDP not found | Provisioning fails with an explicit error naming the missing IDP |
 | **IDP Configuration Name** set, API version < 3.22 | Provisioning fails with an explicit error — upgrade your Tableau Server or remove the field |
+| **IDP Configuration Name** set, connected app authentication | Provisioning fails with an explicit error — Tableau refuses IDP discovery to a JWT session, so use a personal access token or remove the field |
+| Neither field set, IDP discovery unavailable or refused | Account created with Tableau site default authentication |
 | **With MFA** = `true` | Account created with Tableau MFA — **IDP Configuration Name** is ignored regardless of API version |
 
 <Note>
-If your Tableau Server uses an API version older than 3.22 and you do not set **IDP Configuration Name**, account provisioning uses the site default authentication without error. The IDP endpoint is only required when you explicitly configure an IDP name.
+The IDP endpoint is only consulted when it can be. If your Tableau Server predates API 3.22, or you sign in with a connected app, and you do not set **IDP Configuration Name**, account provisioning falls back to the site default authentication without error.
 </Note>

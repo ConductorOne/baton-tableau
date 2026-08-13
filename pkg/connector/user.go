@@ -164,10 +164,11 @@ func (u *userBuilder) selectIDPConfiguration(ctx context.Context, idpConfigName 
 	if idpConfigName != "" {
 		cfg, _, err := u.client.FindIdpConfigurationByName(ctx, idpConfigName)
 		if err != nil {
-			if status.Code(err) == codes.NotFound {
+			if idpDiscoveryUnavailable(err) {
 				return "", uhttp.WrapErrors(codes.InvalidArgument,
 					fmt.Sprintf("IDP configuration '%s' cannot be resolved: site-auth-configurations endpoint unavailable;"+
-						" upgrade to Tableau Server 2023.3+ (API 3.22+) or remove idpConfigurationName", idpConfigName))
+						" upgrade to Tableau Server 2023.3+ (API 3.22+), switch to a personal access token if signing in"+
+						" with a connected app, or remove idpConfigurationName", idpConfigName))
 			}
 			return "", fmt.Errorf("failed to find IDP configuration: %w", err)
 		}
@@ -185,10 +186,14 @@ func (u *userBuilder) selectIDPConfiguration(ctx context.Context, idpConfigName 
 
 	enabledConfigs, _, err := u.client.ListEnabledIdpConfigurations(ctx)
 	if err != nil {
-		if status.Code(err) == codes.NotFound {
-			// Endpoint unavailable on older Tableau Server (<2023.3 / API <3.22).
-			// No idpConfigurationName was requested, so preserve original behavior:
-			// proceed with no auth fields and let Tableau use the site default.
+		if idpDiscoveryUnavailable(err) {
+			// Discovery is out of reach: the endpoint does not exist on older
+			// Tableau Server (<2023.3 / API <3.22), and Tableau publishes no
+			// connected app scope covering it, so a JWT session is refused
+			// outright. No idpConfigurationName was requested, so preserve the
+			// original behavior in both cases: proceed with no auth fields and
+			// let Tableau use the site default. A credential that is broken
+			// rather than merely unscoped fails on the very next call.
 			return "", nil
 		}
 		return "", fmt.Errorf("failed to list IDP configurations: %w", err)
@@ -217,6 +222,20 @@ func (u *userBuilder) Delete(ctx context.Context, resourceId *v2.ResourceId) (an
 func newUserBuilder(client *client.Client) *userBuilder {
 	return &userBuilder{
 		client: client,
+	}
+}
+
+// idpDiscoveryUnavailable reports whether err means the site-auth-configurations
+// endpoint cannot answer at all, as opposed to answering with a result the
+// caller dislikes. Tableau Server before 2023.3 does not route the path, and
+// Tableau publishes no connected app scope for it, so a JWT session is turned
+// away with an authorization failure rather than a 404.
+func idpDiscoveryUnavailable(err error) bool {
+	switch status.Code(err) {
+	case codes.NotFound, codes.Unauthenticated, codes.PermissionDenied:
+		return true
+	default:
+		return false
 	}
 }
 

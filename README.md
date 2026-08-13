@@ -100,12 +100,12 @@ Tableau Cloud only, October 2023 and later. A connected app is a site-level trus
 2. Click **New Connected App** > **Direct Trust**, name it, and click **Create**
 3. Copy the **Client ID**, then generate a secret and copy its **Secret ID** and **Secret Value** — the value is displayed only once
 4. Enable the app and grant these access scopes:
-   `tableau:content:read`, `tableau:sites:read`, `tableau:users:*`, `tableau:groups:*`, `tableau:projects:*`, `tableau:workbooks:*`, `tableau:permissions:update`, `tableau:permissions:delete`
+   `tableau:content:read`, `tableau:sites:read`, `tableau:users:*`, `tableau:groups:*`, `tableau:projects:*`, `tableau:workbooks:*`, `tableau:permissions:read`, `tableau:permissions:update`, `tableau:permissions:delete`
 5. Choose the Tableau user the connector acts as, and note its email address
 
-> **Important**: A missing scope does not fail at sign-in. It surfaces as a 403 partway through a sync or a provisioning action, so grant the full set. The acting user needs the same site administrator role a PAT owner would.
+> **Important**: A missing scope does not fail at sign-in. It surfaces as a 403 partway through a sync or a provisioning action, so grant the full set. `tableau:permissions:read` is the one to check twice — grant sync reads project, workbook, and view ACLs on every run, and `tableau:content:read` does not cover them. The acting user needs the same site administrator role a PAT owner would.
 
-> **Known gap**: Tableau publishes no scope covering site authentication configurations, so IDP discovery during account creation may fail under a connected app where it succeeds under a PAT. The connector treats that lookup as non-fatal and falls back to the site's default authentication setting.
+> **Known gap**: Tableau publishes no scope covering site authentication configurations, so IDP discovery during account creation is refused under a connected app where it succeeds under a PAT. When no `idpConfigurationName` is given the connector treats the refusal as discovery being unavailable and falls back to the site's default authentication setting. On a site with several IDPs that is a real behaviour difference: a PAT would stop and ask you to name one, a connected app takes the site default. Set `idpConfigurationName` explicitly if that matters, and provisioning will fail loudly rather than guess.
 
 **Documentation:** https://help.tableau.com/current/online/en-us/connected_apps_direct.htm
 
