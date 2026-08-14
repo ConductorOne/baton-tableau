@@ -89,6 +89,17 @@ type Client struct {
 	authToken  string
 	siteId     string
 	baseUrl    string
+
+	// usesConnectedApp records which credential opened this session. A connected
+	// app is refused at endpoints Tableau publishes no scope for, so callers
+	// need to tell that refusal apart from a genuine authorization failure.
+	usesConnectedApp bool
+}
+
+// UsesConnectedApp reports whether this session was opened with a connected app
+// rather than a personal access token.
+func (c *Client) UsesConnectedApp() bool {
+	return c.usesConnectedApp
 }
 
 // Config describes how to reach a Tableau site and how to authenticate to it.
@@ -144,10 +155,11 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 	}
 
 	return &Client{
-		httpClient: baseHttpClient,
-		baseUrl:    baseURL,
-		authToken:  credentials.Token,
-		siteId:     credentials.Site.ID,
+		httpClient:       baseHttpClient,
+		baseUrl:          baseURL,
+		authToken:        credentials.Token,
+		siteId:           credentials.Site.ID,
+		usesConnectedApp: cfg.ConnectedApp != nil,
 	}, nil
 }
 

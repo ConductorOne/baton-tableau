@@ -91,7 +91,9 @@ Set the connected app's status to **Enabled**. It is created disabled, and a dis
 
 There are no scopes to grant here. A direct trust app carries no scope list of its own — the connector requests these in the signed assertion, and that claim is the only scope control:
 
-`tableau:content:read`, `tableau:sites:read`, `tableau:users:*`, `tableau:groups:*`, `tableau:projects:*`, `tableau:workbooks:*`, `tableau:permissions:read`, `tableau:permissions:update`, `tableau:permissions:delete`
+`tableau:content:read`, `tableau:sites:read`, `tableau:users:*`, `tableau:groups:*`, `tableau:permissions:read`, `tableau:permissions:update`, `tableau:permissions:delete`
+
+The connector does not request `tableau:projects:*` or `tableau:workbooks:*`. It reads those objects, which `tableau:content:read` covers, and edits their permissions, which the permission scopes cover. The wildcards would only add project deletion and workbook publishing to what a leaked session could do.
 
 Leave access level and domain allowlist at their defaults; both restrict embedded content rather than REST API calls.
 </Step>
@@ -101,7 +103,7 @@ Decide which Tableau user the connector acts as, usually a service account. It n
 </Steps>
 
 <Note>
-Tableau publishes no access scope covering site authentication configurations, so under a connected app that lookup is refused — observed as `401002 Unauthorized Access` against a Tableau Cloud site where it succeeds under a personal access token. With no **IDP Configuration Name** set, the connector treats the refusal as discovery being unavailable and falls back to the site's default authentication setting. On a site with more than one IDP that differs from personal access token behaviour, which stops and asks you to name one. Set **IDP Configuration Name** explicitly if the choice matters; provisioning then fails with an explicit error instead of guessing.
+Tableau publishes no access scope covering site authentication configurations, so under a connected app that lookup is refused — observed as `401002 Unauthorized Access` against a Tableau Cloud site where it succeeds under a personal access token. The connector reads that refusal as discovery being unavailable only when it signed in with a connected app. Under a personal access token the same status is a genuine failure and is reported rather than absorbed. With no **IDP Configuration Name** set, the connector treats the refusal as discovery being unavailable and falls back to the site's default authentication setting. On a site with more than one IDP that differs from personal access token behaviour, which stops and asks you to name one. Set **IDP Configuration Name** explicitly if the choice matters; provisioning then fails with an explicit error instead of guessing.
 </Note>
 
 ### Locate your server path and site ID

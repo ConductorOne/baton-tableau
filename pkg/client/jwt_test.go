@@ -73,6 +73,12 @@ func TestNewConnectedAppJWT_Structure(t *testing.T) {
 	// Tableau gates those reads behind their own scope. Its absence would not
 	// show up until a sync against a site with content.
 	require.Contains(t, scopes, "tableau:permissions:read")
+
+	// The connector reads projects and workbooks and edits their permissions,
+	// but never writes the objects themselves. Requesting these wildcards would
+	// hand a leaked session project deletion and workbook publishing.
+	require.NotContains(t, scopes, "tableau:projects:*")
+	require.NotContains(t, scopes, "tableau:workbooks:*")
 }
 
 // TestNewConnectedAppJWT_Signature recomputes the HMAC over the signing input

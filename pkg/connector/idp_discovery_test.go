@@ -37,7 +37,7 @@ func idpDiscoveryServer(t *testing.T, discoveryStatus int) *httptest.Server {
 func newTestUserBuilder(t *testing.T, server *httptest.Server) *userBuilder {
 	t.Helper()
 
-	c, err := client.New(context.Background(), client.Config{
+	cfg := client.Config{
 		SiteID:          "thg_plc",
 		BaseURLOverride: server.URL,
 		ConnectedApp: &client.ConnectedApp{
@@ -45,6 +45,27 @@ func newTestUserBuilder(t *testing.T, server *httptest.Server) *userBuilder {
 			SecretID:    "secret-id",
 			SecretValue: "secret-value",
 			Username:    "svc.tableau@example.com",
+		},
+	}
+
+	c, err := client.New(context.Background(), cfg)
+	require.NoError(t, err)
+
+	return newUserBuilder(c)
+}
+
+// newTestUserBuilderWithPAT is the personal access token counterpart. Tableau
+// answers sign-in identically for both credentials, so the only difference that
+// reaches selectIDPConfiguration is which credential opened the session.
+func newTestUserBuilderWithPAT(t *testing.T, server *httptest.Server) *userBuilder {
+	t.Helper()
+
+	c, err := client.New(context.Background(), client.Config{
+		SiteID:          "thg_plc",
+		BaseURLOverride: server.URL,
+		PersonalAccessToken: &client.PersonalAccessToken{
+			Name:   "conductor1",
+			Secret: "secret",
 		},
 	})
 	require.NoError(t, err)
@@ -69,6 +90,44 @@ func TestSelectIDPConfiguration_DiscoveryRefused(t *testing.T) {
 			idpID, err := newTestUserBuilder(t, server).selectIDPConfiguration(context.Background(), "")
 			require.NoError(t, err)
 			require.Empty(t, idpID, "an unresolvable lookup falls back to the site default auth setting")
+		})
+	}
+}
+
+// TestSelectIDPConfiguration_PersonalAccessToken draws the line the connected
+// app fallback must not cross. A personal access token is entitled to the
+// site-auth-configurations endpoint, so 401 and 403 mean that credential is
+// genuinely failing and must surface. Creating the account on the site default
+// instead would silently give it the wrong authentication type. Only the 404,
+// which means the endpoint is not routed at all, still degrades.
+func TestSelectIDPConfiguration_PersonalAccessToken(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		discoveryStatus int
+		wantFallback    bool
+	}{
+		{http.StatusUnauthorized, false},
+		{http.StatusForbidden, false},
+		{http.StatusNotFound, true},
+	}
+
+	for _, test := range tests {
+		t.Run(http.StatusText(test.discoveryStatus), func(t *testing.T) {
+			t.Parallel()
+
+			server := idpDiscoveryServer(t, test.discoveryStatus)
+			defer server.Close()
+
+			idpID, err := newTestUserBuilderWithPAT(t, server).selectIDPConfiguration(context.Background(), "")
+			if test.wantFallback {
+				require.NoError(t, err)
+				require.Empty(t, idpID)
+				return
+			}
+
+			require.Error(t, err, "an authorization failure on a personal access token is a real error")
+			require.ErrorContains(t, err, "failed to list IDP configurations")
 		})
 	}
 }

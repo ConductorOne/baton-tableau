@@ -25,26 +25,36 @@ const jwtLifetime = 5 * time.Minute
 // connected app. For direct trust this claim is the only scope control there
 // is: the app itself carries no scope list, and its access level and domain
 // allowlist govern embedding rather than the REST API. The list must therefore
-// cover every endpoint this package calls — sites and content reads, the full
-// user and group lifecycle for provisioning, and reading and writing
-// permissions on projects, workbooks, and views.
+// cover every endpoint this package calls, and no more. A leaked session is
+// bounded by this claim, so each entry has to earn its place.
+//
+// The list deliberately omits tableau:projects:* and tableau:workbooks:*. This
+// package never creates, updates, moves, publishes, downloads or deletes a
+// project or a workbook: it only reads them, which tableau:content:read covers,
+// and changes their permissions, which the permission scopes cover. Those two
+// wildcards would add project deletion and workbook publishing to the blast
+// radius for no gain.
 //
 // Permission reads need their own scope. Grant sync enumerates project,
 // workbook, and view ACLs on every run, and Tableau gates those GETs behind
 // tableau:permissions:read rather than tableau:content:read — omit it and
 // sign-in succeeds while the first site with content fails mid-sync.
 //
+// The user and group scopes stay as wildcards because Tableau documents no
+// granular alternative that covers what provisioning does. It publishes
+// tableau:users:create and tableau:users:delete but nothing for the site role
+// update the licence path performs, and nothing granular for groups at all.
+//
 // Tableau publishes no scope covering /site-auth-configurations. A connected
 // app session is refused there with 401 401002 where a personal access token
 // succeeds, so the account-creation path treats that refusal as discovery
-// being unavailable and falls back to the site default.
+// being unavailable — but only for a connected app — and falls back to the
+// site default.
 var connectedAppScopes = []string{
 	"tableau:content:read",
 	"tableau:sites:read",
 	"tableau:users:*",
 	"tableau:groups:*",
-	"tableau:projects:*",
-	"tableau:workbooks:*",
 	"tableau:permissions:read",
 	"tableau:permissions:update",
 	"tableau:permissions:delete",

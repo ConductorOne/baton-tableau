@@ -9,6 +9,8 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
+	"github.com/conductorone/baton-sdk/pkg/pagination"
+	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-tableau/pkg/client"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -23,6 +25,12 @@ func liveClient(t *testing.T) *client.Client {
 	if os.Getenv("BATON_TABLEAU_LIVE") == "" {
 		t.Skip("set BATON_TABLEAU_LIVE=1 to run against a live Tableau site")
 	}
+
+	// These tests read state back immediately after changing it, and the SDK
+	// caches GET responses. Left enabled, a permission read issued after a
+	// revoke is served from that cache and still reports the grant, which is
+	// indistinguishable from a revoke that did nothing.
+	t.Setenv("BATON_DISABLE_HTTP_CACHE", "true")
 
 	c, err := client.New(context.Background(), client.Config{
 		ServerPath: os.Getenv("BATON_SERVER_PATH"),
@@ -121,12 +129,15 @@ const viewCapabilitySlug = "View"
 // permissionEntitlement builds the entitlement shape the permission builders
 // expect. Grant and Revoke read the capability from the third colon-separated
 // field of the entitlement ID, and the target from the entitlement resource.
-func permissionEntitlement(resourceType, resourceID, displaySlug string) *v2.Entitlement {
+//
+// The resource is passed through rather than rebuilt from its identifiers,
+// because the view builder reaches for the parent workbook on this resource to
+// decide whether showTabs blocks the write. Rebuilding it would drop the parent
+// and silently skip that check.
+func permissionEntitlement(resource *v2.Resource, displaySlug string) *v2.Entitlement {
 	return &v2.Entitlement{
-		Id: fmt.Sprintf("%s:%s:%s", resourceType, resourceID, displaySlug),
-		Resource: &v2.Resource{
-			Id: &v2.ResourceId{ResourceType: resourceType, Resource: resourceID},
-		},
+		Id:       fmt.Sprintf("%s:%s:%s", resource.Id.ResourceType, resource.Id.Resource, displaySlug),
+		Resource: resource,
 	}
 }
 
@@ -172,47 +183,104 @@ func TestLivePermissions(t *testing.T) {
 		Id: &v2.ResourceId{ResourceType: resourceTypeUser.Id, Resource: user.ID},
 	}
 
+	// The view resource carries its parent workbook, because the view builder
+	// only consults showTabs when the parent is present. Omitting it would skip
+	// the guard that production always runs.
+	viewResource := &v2.Resource{
+		Id: &v2.ResourceId{ResourceType: resourceTypeView.Id, Resource: viewID},
+	}
+	if workbookID != "" {
+		viewResource.ParentResourceId = &v2.ResourceId{
+			ResourceType: resourceTypeWorkbook.Id, Resource: workbookID,
+		}
+	}
+
 	cases := []struct {
-		name         string
-		resourceType string
-		resourceID   string
-		slug         string
-		grant        func(context.Context, *v2.Resource, *v2.Entitlement) (annotations.Annotations, error)
-		revoke       func(context.Context, *v2.Grant) (annotations.Annotations, error)
+		name     string
+		resource *v2.Resource
+		slug     string
+		grant    func(context.Context, *v2.Resource, *v2.Entitlement) (annotations.Annotations, error)
+		revoke   func(context.Context, *v2.Grant) (annotations.Annotations, error)
+		grants   func(context.Context, *v2.Resource, rs.SyncOpAttrs) ([]*v2.Grant, *rs.SyncOpResults, error)
 	}{
 		{
-			name: "project", resourceType: resourceTypeProject.Id, resourceID: projectID, slug: viewCapabilitySlug,
-			grant: newProjectBuilder(c).Grant, revoke: newProjectBuilder(c).Revoke,
+			name:     "project",
+			resource: &v2.Resource{Id: &v2.ResourceId{ResourceType: resourceTypeProject.Id, Resource: projectID}},
+			slug:     viewCapabilitySlug,
+			grant:    newProjectBuilder(c).Grant, revoke: newProjectBuilder(c).Revoke, grants: newProjectBuilder(c).Grants,
 		},
 		{
 			// "Workbook / View" is a default workbook capability on the project,
 			// which takes a different Tableau endpoint to a plain project grant.
-			name: "project default workbook", resourceType: resourceTypeProject.Id, resourceID: projectID, slug: "Workbook / View",
-			grant: newProjectBuilder(c).Grant, revoke: newProjectBuilder(c).Revoke,
+			name:     "project default workbook",
+			resource: &v2.Resource{Id: &v2.ResourceId{ResourceType: resourceTypeProject.Id, Resource: projectID}},
+			slug:     "Workbook / View",
+			grant:    newProjectBuilder(c).Grant, revoke: newProjectBuilder(c).Revoke, grants: newProjectBuilder(c).Grants,
 		},
 		{
-			name: "workbook", resourceType: resourceTypeWorkbook.Id, resourceID: workbookID, slug: viewCapabilitySlug,
-			grant: newWorkbookBuilder(c).Grant, revoke: newWorkbookBuilder(c).Revoke,
+			name:     "workbook",
+			resource: &v2.Resource{Id: &v2.ResourceId{ResourceType: resourceTypeWorkbook.Id, Resource: workbookID}},
+			slug:     viewCapabilitySlug,
+			grant:    newWorkbookBuilder(c).Grant, revoke: newWorkbookBuilder(c).Revoke, grants: newWorkbookBuilder(c).Grants,
 		},
 		{
-			name: "view", resourceType: resourceTypeView.Id, resourceID: viewID, slug: viewCapabilitySlug,
-			grant: newViewBuilder(c).Grant, revoke: newViewBuilder(c).Revoke,
+			name:     "view",
+			resource: viewResource,
+			slug:     viewCapabilitySlug,
+			grant:    newViewBuilder(c).Grant, revoke: newViewBuilder(c).Revoke, grants: newViewBuilder(c).Grants,
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.resourceID == "" {
+			if tc.resource.Id.Resource == "" {
 				t.Skipf("no id supplied for %s", tc.name)
 			}
 
-			entitlement := permissionEntitlement(tc.resourceType, tc.resourceID, tc.slug)
+			entitlement := permissionEntitlement(tc.resource, tc.slug)
 
 			_, err := tc.grant(ctx, principal, entitlement)
 			require.NoError(t, err, "granting %s permission must work under a connected app", tc.name)
 
+			require.True(t, principalHasGrant(ctx, t, tc.grants, tc.resource, user.ID),
+				"the granted %s permission must be visible through the permission read path", tc.name)
+
 			_, err = tc.revoke(ctx, &v2.Grant{Principal: principal, Entitlement: entitlement})
 			require.NoError(t, err, "revoking %s permission must work under a connected app", tc.name)
+
+			require.False(t, principalHasGrant(ctx, t, tc.grants, tc.resource, user.ID),
+				"the revoked %s permission must be gone from the permission read path", tc.name)
 		})
+	}
+}
+
+// principalHasGrant reports whether the permission read path reports any grant
+// for the given principal. Reading the permissions back is what exercises
+// tableau:permissions:read, and it verifies the revoke actually undid the grant
+// rather than merely returning without an error.
+func principalHasGrant(
+	ctx context.Context,
+	t *testing.T,
+	grants func(context.Context, *v2.Resource, rs.SyncOpAttrs) ([]*v2.Grant, *rs.SyncOpResults, error),
+	resource *v2.Resource,
+	principalID string,
+) bool {
+	t.Helper()
+
+	var token string
+	for {
+		found, results, err := grants(ctx, resource, rs.SyncOpAttrs{PageToken: pagination.Token{Token: token}})
+		require.NoError(t, err, "reading permissions back must work under a connected app")
+
+		for _, g := range found {
+			if g.Principal.GetId().GetResource() == principalID {
+				return true
+			}
+		}
+
+		if results == nil || results.NextPageToken == "" {
+			return false
+		}
+		token = results.NextPageToken
 	}
 }
