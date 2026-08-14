@@ -22,10 +22,11 @@ import (
 const jwtLifetime = 5 * time.Minute
 
 // connectedAppScopes are the access scopes requested when signing in with a
-// connected app. Tableau bounds the resulting session by the intersection of
-// this list and the scopes enabled on the connected app itself, so the list
-// must cover every endpoint this package calls: sites and content reads, the
-// full user and group lifecycle for provisioning, and reading and writing
+// connected app. For direct trust this claim is the only scope control there
+// is: the app itself carries no scope list, and its access level and domain
+// allowlist govern embedding rather than the REST API. The list must therefore
+// cover every endpoint this package calls — sites and content reads, the full
+// user and group lifecycle for provisioning, and reading and writing
 // permissions on projects, workbooks, and views.
 //
 // Permission reads need their own scope. Grant sync enumerates project,
@@ -33,10 +34,10 @@ const jwtLifetime = 5 * time.Minute
 // tableau:permissions:read rather than tableau:content:read — omit it and
 // sign-in succeeds while the first site with content fails mid-sync.
 //
-// Tableau publishes no scope covering /site-auth-configurations, so IDP
-// discovery may be refused under a connected app where it succeeds under a
-// personal access token. The account-creation path treats that refusal as
-// discovery being unavailable and falls back to the site default.
+// Tableau publishes no scope covering /site-auth-configurations. A connected
+// app session is refused there with 401 401002 where a personal access token
+// succeeds, so the account-creation path treats that refusal as discovery
+// being unavailable and falls back to the site default.
 var connectedAppScopes = []string{
 	"tableau:content:read",
 	"tableau:sites:read",

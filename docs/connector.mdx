@@ -72,7 +72,7 @@ Carefully copy and save the newly generated token and its name. Tableau treats t
 
 ### Or set up a connected app
 
-A personal access token belongs to an individual, so the connector inherits that person's account lifecycle. Tableau also expires every token eventually — after 1 to 365 days depending on your site settings, and after 15 consecutive days of non-use. A connected app is a site-level trust instead, so its secret is rotated deliberately rather than expiring underneath you.
+A personal access token belongs to an individual, so the connector follows that person's account lifecycle. Tableau also expires every token: after 1 to 365 days, depending on your site settings, and after 15 days without use. A connected app is a site-level trust instead. Its secret does not expire on its own; you rotate it when you choose to.
 
 Configure either a personal access token or a connected app, not both.
 
@@ -87,11 +87,13 @@ Click **New Connected App** > **Direct Trust**, give it a name, and click **Crea
 Copy the **Client ID**. Then generate a secret and copy both its **Secret ID** and **Secret Value**. The secret value is shown only once.
 </Step>
 <Step>
-Enable the connected app and grant it these access scopes:
+Set the connected app's status to **Enabled**. It is created disabled, and a disabled app refuses every sign-in.
+
+There are no scopes to grant here. A direct trust app carries no scope list of its own — the connector requests these in the signed assertion, and that claim is the only scope control:
 
 `tableau:content:read`, `tableau:sites:read`, `tableau:users:*`, `tableau:groups:*`, `tableau:projects:*`, `tableau:workbooks:*`, `tableau:permissions:read`, `tableau:permissions:update`, `tableau:permissions:delete`
 
-A missing scope does not fail at sign-in. It surfaces later as a 403 partway through a sync or a provisioning action, so grant the full set. Check `tableau:permissions:read` twice: grant sync reads project, workbook, and view ACLs on every run, and `tableau:content:read` does not cover those reads.
+Leave access level and domain allowlist at their defaults; both restrict embedded content rather than REST API calls.
 </Step>
 <Step>
 Decide which Tableau user the connector acts as, usually a service account. It needs the same site administrator rights a personal access token owner would need. Save its email address.
@@ -99,7 +101,7 @@ Decide which Tableau user the connector acts as, usually a service account. It n
 </Steps>
 
 <Note>
-Tableau publishes no access scope covering site authentication configurations, so under a connected app that lookup is refused where it would succeed under a personal access token. With no **IDP Configuration Name** set, the connector treats the refusal as discovery being unavailable and falls back to the site's default authentication setting. On a site with more than one IDP that differs from personal access token behaviour, which stops and asks you to name one. Set **IDP Configuration Name** explicitly if the choice matters; provisioning then fails with an explicit error instead of guessing.
+Tableau publishes no access scope covering site authentication configurations, so under a connected app that lookup is refused — observed as `401002 Unauthorized Access` against a Tableau Cloud site where it succeeds under a personal access token. With no **IDP Configuration Name** set, the connector treats the refusal as discovery being unavailable and falls back to the site's default authentication setting. On a site with more than one IDP that differs from personal access token behaviour, which stops and asks you to name one. Set **IDP Configuration Name** explicitly if the choice matters; provisioning then fails with an explicit error instead of guessing.
 </Note>
 
 ### Locate your server path and site ID
