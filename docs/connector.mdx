@@ -66,9 +66,45 @@ In the menu bar at the top of the page, click your profile image or initials and
 In the **Personal Access Tokens** area of the page, enter a name for your new token (such as "C1 integration") and then click **Create**. 
 </Step>
 <Step>
-Carefully copy and save the newly generated token and its name. 
+Carefully copy and save the newly generated token and its name. Tableau treats the name and the secret as a pair, so both are required and both must belong to the same token.
 </Step>
 </Steps>
+
+### Or set up a connected app
+
+A personal access token belongs to an individual, so the connector follows that person's account lifecycle. Tableau also expires every token: after 1 to 365 days, depending on your site settings, and after 15 days without use. A connected app is a site-level trust instead. Its secret does not expire on its own; you rotate it when you choose to.
+
+Configure either a personal access token or a connected app, not both.
+
+<Steps>
+<Step>
+Sign into Tableau Cloud as a site administrator and navigate to **Settings** > **Connected Apps**.
+</Step>
+<Step>
+Click **New Connected App** > **Direct Trust**, give it a name, and click **Create**.
+</Step>
+<Step>
+Copy the **Client ID**. Then generate a secret and copy both its **Secret ID** and **Secret Value**. The secret value is shown only once.
+</Step>
+<Step>
+Set the connected app's status to **Enabled**. It is created disabled, and a disabled app refuses every sign-in.
+
+There are no scopes to grant here. A direct trust app carries no scope list of its own — the connector requests these in the signed assertion, and that claim is the only scope control:
+
+`tableau:content:read`, `tableau:sites:read`, `tableau:users:*`, `tableau:groups:*`, `tableau:permissions:read`, `tableau:permissions:update`, `tableau:permissions:delete`
+
+The connector does not request `tableau:projects:*` or `tableau:workbooks:*`. It reads those objects, which `tableau:content:read` covers, and edits their permissions, which the permission scopes cover. The wildcards would only add project deletion and workbook publishing to what a leaked session could do.
+
+Leave access level and domain allowlist at their defaults; both restrict embedded content rather than REST API calls.
+</Step>
+<Step>
+Decide which Tableau user the connector acts as, usually a service account. It needs the same site administrator rights a personal access token owner would need. Save its email address.
+</Step>
+</Steps>
+
+<Note>
+Tableau publishes no access scope covering site authentication configurations, so under a connected app that lookup is refused — observed as `401002 Unauthorized Access` against a Tableau Cloud site where it succeeds under a personal access token. The connector reads that refusal as discovery being unavailable only when it signed in with a connected app. Under a personal access token the same status is a genuine failure and is reported rather than absorbed. With no **IDP Configuration Name** set, the connector treats the refusal as discovery being unavailable and falls back to the site's default authentication setting. On a site with more than one IDP that differs from personal access token behaviour, which stops and asks you to name one. Set **IDP Configuration Name** explicitly if the choice matters; provisioning then fails with an explicit error instead of guessing.
+</Note>
 
 ### Locate your server path and site ID
 
@@ -133,10 +169,10 @@ Find the **Settings** area of the page and click **Edit**.
 Enter the site ID and server path into the **Site ID** and **Server path** fields.
 </Step>
 <Step>
-Enter the name of the personal access token into the **Access token name** field. 
+If you are using a personal access token, enter its name into the **Access token name** field and its value into the **Access token secret** field.
 </Step>
 <Step>
-Enter the personal access token value into the **Access token secret** field. 
+If you are using a connected app instead, leave the access token fields empty and fill in **Connected app client ID**, **Connected app secret ID**, **Connected app secret value**, and **Connected app username**. The username is the email address of the Tableau user the connector acts as.
 </Step>
 <Step>
 Click **Save**.
@@ -294,8 +330,10 @@ These fields appear in the **provisioning mapping** for the Licenses entitlement
 | **IDP Configuration Name** set, IDP found | Account created with the named IDP |
 | **IDP Configuration Name** set, IDP not found | Provisioning fails with an explicit error naming the missing IDP |
 | **IDP Configuration Name** set, API version < 3.22 | Provisioning fails with an explicit error — upgrade your Tableau Server or remove the field |
+| **IDP Configuration Name** set, connected app authentication | Provisioning fails with an explicit error — Tableau refuses IDP discovery to a JWT session, so use a personal access token or remove the field |
+| Neither field set, IDP discovery unavailable or refused | Account created with Tableau site default authentication |
 | **With MFA** = `true` | Account created with Tableau MFA — **IDP Configuration Name** is ignored regardless of API version |
 
 <Note>
-If your Tableau Server uses an API version older than 3.22 and you do not set **IDP Configuration Name**, account provisioning uses the site default authentication without error. The IDP endpoint is only required when you explicitly configure an IDP name.
+The IDP endpoint is only consulted when it can be. If your Tableau Server predates API 3.22, or you sign in with a connected app, and you do not set **IDP Configuration Name**, account provisioning falls back to the site default authentication without error.
 </Note>

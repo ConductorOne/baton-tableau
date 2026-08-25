@@ -3,7 +3,7 @@
 // API Endpoints Used:
 //
 //	Authentication:
-//	- POST /api/{version}/auth/signin                                                           - Sign in with Personal Access Token
+//	- POST /api/{version}/auth/signin                                                           - Sign in with a personal access token or connected app JWT
 //
 //	Sites:
 //	- GET  /api/{version}/sites/{siteId}                                                        - Get site details
@@ -54,7 +54,7 @@
 //	- GET  /api/{version}/sites/{siteId}/site-auth-configurations                               - List IDP configurations
 //
 // Authentication:
-//   - Personal Access Token (PAT) via /auth/signin, then X-Tableau-Auth header
+//   - Personal access token or connected app JWT via /auth/signin, then X-Tableau-Auth header
 //
 // Pagination:
 //   - Uses pageSize and pageNumber query parameters (1-based, default pageSize=100)
@@ -69,6 +69,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
@@ -88,18 +89,51 @@ type Client struct {
 	authToken  string
 	siteId     string
 	baseUrl    string
+
+	// usesConnectedApp records which credential opened this session. A connected
+	// app is refused at endpoints Tableau publishes no scope for, so callers
+	// need to tell that refusal apart from a genuine authorization failure.
+	usesConnectedApp bool
+}
+
+// UsesConnectedApp reports whether this session was opened with a connected app
+// rather than a personal access token.
+func (c *Client) UsesConnectedApp() bool {
+	return c.usesConnectedApp
+}
+
+// Config describes how to reach a Tableau site and how to authenticate to it.
+// Exactly one of PersonalAccessToken or ConnectedApp must be set.
+type Config struct {
+	ServerPath string
+	SiteID     string
+	APIVersion string
+
+	// BaseURLOverride, when non-empty, is used directly instead of being built
+	// from ServerPath and APIVersion. This is intended for testability (e.g.
+	// pointing the connector at a local test server).
+	BaseURLOverride string
+
+	PersonalAccessToken *PersonalAccessToken
+	ConnectedApp        *ConnectedApp
+}
+
+// PersonalAccessToken holds a Tableau personal access token. Tableau treats
+// the name and secret as a pair, so a stale name alongside a fresh secret
+// fails in exactly the way an expired token does.
+type PersonalAccessToken struct {
+	Name   string
+	Secret string
 }
 
 // New creates an authenticated Tableau API client.
-// If baseURLOverride is non-empty, it is used directly instead of building from serverPath/apiVersion.
-// This is intended for testability (e.g. pointing the connector at a local test server).
-func New(ctx context.Context, serverPath, siteID, accessTokenName, accessTokenSecret, apiVersion, baseURLOverride string) (*Client, error) {
+func New(ctx context.Context, cfg Config) (*Client, error) {
 	var baseURL string
-	if baseURLOverride != "" {
-		baseURL = baseURLOverride
+	if cfg.BaseURLOverride != "" {
+		baseURL = cfg.BaseURLOverride
 	} else {
 		var err error
-		baseURL, err = BuildBaseURL(serverPath, apiVersion)
+		baseURL, err = BuildBaseURL(cfg.ServerPath, cfg.APIVersion)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build base URL: %w", err)
 		}
@@ -110,7 +144,7 @@ func New(ctx context.Context, serverPath, siteID, accessTokenName, accessTokenSe
 		return nil, fmt.Errorf("failed to create http client: %w", err)
 	}
 
-	credentials, err := Login(ctx, httpClient, baseURL, siteID, accessTokenSecret, accessTokenName)
+	credentials, err := Login(ctx, httpClient, baseURL, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to authenticate: %w", err)
 	}
@@ -121,10 +155,11 @@ func New(ctx context.Context, serverPath, siteID, accessTokenName, accessTokenSe
 	}
 
 	return &Client{
-		httpClient: baseHttpClient,
-		baseUrl:    baseURL,
-		authToken:  credentials.Token,
-		siteId:     credentials.Site.ID,
+		httpClient:       baseHttpClient,
+		baseUrl:          baseURL,
+		authToken:        credentials.Token,
+		siteId:           credentials.Site.ID,
+		usesConnectedApp: cfg.ConnectedApp != nil,
 	}, nil
 }
 
@@ -132,22 +167,22 @@ func New(ctx context.Context, serverPath, siteID, accessTokenName, accessTokenSe
 // Authentication
 // =============================================================================
 
-// Login authenticates with a Personal Access Token and returns session credentials.
-func Login(ctx context.Context, httpClient *http.Client, baseUrl, contentUrl, accessToken, tokenName string) (*Credentials, error) {
+// Login exchanges the configured credential for a Tableau session and returns
+// the resulting credentials. Both credential types post to the same endpoint
+// and differ only in the attributes carried on the credentials object.
+func Login(ctx context.Context, httpClient *http.Client, baseUrl string, cfg Config) (*Credentials, error) {
 	loginURL, err := url.JoinPath(baseUrl, authSignin)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build login URL: %w", err)
 	}
 
-	body, err := json.Marshal(map[string]any{
-		"credentials": map[string]any{
-			"personalAccessTokenName":   tokenName,
-			"personalAccessTokenSecret": accessToken,
-			"site": map[string]string{
-				"contentUrl": contentUrl,
-			},
-		},
-	})
+	credentials, err := loginCredentials(cfg)
+	if err != nil {
+		return nil, err
+	}
+	credentials["site"] = map[string]string{"contentUrl": cfg.SiteID}
+
+	body, err := json.Marshal(map[string]any{"credentials": credentials})
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal login body: %w", err)
 	}
@@ -181,6 +216,32 @@ func Login(ctx context.Context, httpClient *http.Client, baseUrl, contentUrl, ac
 	}
 
 	return &res.Credentials, nil
+}
+
+// loginCredentials builds the credential attributes for the sign-in request.
+// Requiring exactly one credential here keeps the ambiguity out of the request
+// rather than letting Tableau arbitrate between two sets.
+func loginCredentials(cfg Config) (map[string]any, error) {
+	switch {
+	case cfg.PersonalAccessToken != nil && cfg.ConnectedApp != nil:
+		return nil, fmt.Errorf("both a personal access token and connected app credentials were supplied; use one or the other")
+
+	case cfg.PersonalAccessToken != nil:
+		return map[string]any{
+			"personalAccessTokenName":   cfg.PersonalAccessToken.Name,
+			"personalAccessTokenSecret": cfg.PersonalAccessToken.Secret,
+		}, nil
+
+	case cfg.ConnectedApp != nil:
+		assertion, err := newConnectedAppJWT(*cfg.ConnectedApp, time.Now())
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"jwt": assertion}, nil
+
+	default:
+		return nil, fmt.Errorf("no credentials supplied; set either a personal access token or connected app credentials")
+	}
 }
 
 // =============================================================================

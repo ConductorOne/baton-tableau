@@ -6,6 +6,10 @@ import "reflect"
 type Tableau struct {
 	AccessTokenName string `mapstructure:"access-token-name"`
 	AccessTokenSecret string `mapstructure:"access-token-secret"`
+	ConnectedAppClientId string `mapstructure:"connected-app-client-id"`
+	ConnectedAppSecretId string `mapstructure:"connected-app-secret-id"`
+	ConnectedAppSecretValue string `mapstructure:"connected-app-secret-value"`
+	ConnectedAppUsername string `mapstructure:"connected-app-username"`
 	ServerPath string `mapstructure:"server-path"`
 	SiteId string `mapstructure:"site-id"`
 	ApiVersion string `mapstructure:"api-version"`
