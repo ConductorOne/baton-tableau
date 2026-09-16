@@ -23,7 +23,7 @@ baton resources
 ## docker
 
 ```
-docker run --rm -v $(pwd):/out -e BATON_ACCESS_TOKEN_NAME=your-token-name -e BATON_ACCESS_TOKEN_SECRET=your-token-secret -e BATON_SERVER_PATH=us-east-1.online.tableau.com -e BATON_SITE_ID=your-site-id ghcr.io/conductorone/baton-tableau:latest -f "/out/sync.c1z"
+docker run --rm -v $(pwd):/out -e BATON_ACCESS_TOKEN_NAME=your-token-name -e BATON_ACCESS_TOKEN_SECRET=your-token-secret -e BATON_SERVER_PATH=us-east-1.online.tableau.com -e BATON_SITE_ID=your-site-id public.ecr.aws/conductorone/baton-tableau:latest -f "/out/sync.c1z"
 docker run --rm -v $(pwd):/out ghcr.io/conductorone/baton:latest -f "/out/sync.c1z" resources
 ```
 
