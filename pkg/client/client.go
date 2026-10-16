@@ -10,7 +10,7 @@
 //
 //	Users:
 //	- GET    /api/{version}/sites/{siteId}/users                                                - List users (paginated)
-//	- GET    /api/{version}/sites/{siteId}/users/{userId}                                       - Verify current user
+//	- GET    /api/{version}/sites/{siteId}/users/{userId}                                       - Verify current user / get a single user
 //	- POST   /api/{version}/sites/{siteId}/users                                                - Add user to site
 //	- PUT    /api/{version}/sites/{siteId}/users/{userId}                                       - Update user site role
 //	- DELETE /api/{version}/sites/{siteId}/users/{userId}                                       - Remove user from site
@@ -279,6 +279,23 @@ func (c *Client) AddUserToSite(ctx context.Context, user CreateUserRequest) (*Us
 	}
 
 	return res.User, annos, nil
+}
+
+// GetUser returns a single user by ID. Callers can distinguish a missing
+// user from other failures with IsNotFoundError.
+func (c *Client) GetUser(ctx context.Context, userId string) (*User, annotations.Annotations, error) {
+	urlGetUser, err := c.buildSiteURL(pathUsers, userId)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var res userResponse
+	annos, err := c.doRequest(ctx, http.MethodGet, urlGetUser, &res, nil)
+	if err != nil {
+		return nil, annos, err
+	}
+
+	return &res.User, annos, nil
 }
 
 // UpdateUserSiteRole updates a user's site role.
@@ -771,6 +788,12 @@ func permissionBody(granteeType, granteeID, capabilityName, capabilityMode strin
 			},
 		},
 	}
+}
+
+// IsNotFoundError reports whether err is the error doRequest returns for an
+// HTTP 404 response (e.g. GetUser on a deleted/unknown user ID).
+func IsNotFoundError(err error) bool {
+	return status.Code(err) == codes.NotFound
 }
 
 // doRequest executes an HTTP request against the Tableau API.

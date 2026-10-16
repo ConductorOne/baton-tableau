@@ -33,6 +33,8 @@ In Tableau, licensing is role-based: each user's **site role** determines their 
 When your Tableau site has per-tier seat capacities configured, C1 tracks the purchased and consumed seat counts for each license tier, so you can review license utilization alongside who holds each tier.
 </Note>
 
+Because a tier is a view of the user's single site role, several roles can satisfy the same tier (for example, `SiteAdministratorCreator` already satisfies the Creator tier). Granting a tier the user already holds is a no-op and never overwrites a more privileged role with the tier's base role. Granting a *different* tier to a user who currently holds a Site Administrator or Server Administrator role is refused rather than silently removing their admin access — use the Site Role entitlement to change an admin role explicitly.
+
 ## Permission inheritance
 
 Tableau uses a permission inheritance model that affects how access is synced and provisioned:
