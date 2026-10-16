@@ -1,10 +1,19 @@
 package connector
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
+	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
+	"github.com/conductorone/baton-tableau/pkg/client"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // TestLicenseResource_Trait asserts the LicenseProfileTrait is attached with the
@@ -106,4 +115,257 @@ func TestCapacitySeats(t *testing.T) {
 			require.Equal(t, tt.wantN, n)
 		})
 	}
+}
+
+// =============================================================================
+// Grant / Revoke (CXH-2368)
+// =============================================================================
+
+const licenseTestSiteID = "site-1"
+
+type recordedPut struct {
+	userID   string
+	siteRole string
+}
+
+// newLicenseTestClient starts a mock Tableau API server that authenticates
+// any login, serves GetUser from users (keyed by user ID, valued by current
+// site role; a missing key means a 404), and records every PUT
+// (UpdateUserSiteRole) it receives so tests can assert exact write counts
+// and bodies.
+func newLicenseTestClient(t *testing.T, users map[string]string, puts *[]recordedPut) *client.Client {
+	t.Helper()
+
+	usersPathPrefix := "/sites/" + licenseTestSiteID + "/users/"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/auth/signin":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"credentials": map[string]any{
+					"site":  map[string]any{"id": licenseTestSiteID},
+					"user":  map[string]any{"id": "me"},
+					"token": "test-token",
+				},
+			})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, usersPathPrefix):
+			userID := strings.TrimPrefix(r.URL.Path, usersPathPrefix)
+			role, ok := users[userID]
+			if !ok {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"error":{"summary":"Not Found","detail":"user not found","code":"0x1"}}`))
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"user": map[string]any{"id": userID, "siteRole": role},
+			})
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, usersPathPrefix):
+			userID := strings.TrimPrefix(r.URL.Path, usersPathPrefix)
+			var body struct {
+				User struct {
+					SiteRole string `json:"siteRole"`
+				} `json:"user"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			*puts = append(*puts, recordedPut{userID: userID, siteRole: body.User.SiteRole})
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"user": map[string]any{"id": userID, "siteRole": body.User.SiteRole},
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"summary":"Not Found","detail":"unexpected request","code":"0x2"}}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := client.New(context.Background(), "unused", licenseTestSiteID, "token-name", "token-secret", "3.19", srv.URL)
+	require.NoError(t, err)
+	return c
+}
+
+func testUserPrincipal(id string) *v2.Resource {
+	return &v2.Resource{Id: &v2.ResourceId{ResourceType: resourceTypeUser.Id, Resource: id}}
+}
+
+func testLicenseEntitlement(tier string) *v2.Entitlement {
+	return &v2.Entitlement{
+		Resource: &v2.Resource{
+			Id: &v2.ResourceId{ResourceType: resourceTypeLicense.Id, Resource: strings.ToLower(tier)},
+		},
+	}
+}
+
+// TestLicenseGrant_AlreadyInTier covers acceptance criteria 1 and 3: granting
+// a tier to a user whose current site role already satisfies that tier must
+// perform no write and report GrantAlreadyExists -- this was the exact shape
+// of the CXH-2368 bug (a SiteAdministratorCreator re-granted Creator was
+// demoted to plain Creator).
+func TestLicenseGrant_AlreadyInTier(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		tier    string
+		curRole string
+	}{
+		{"creator tier: Creator", creator, creator},
+		{"creator tier: SiteAdministratorCreator", creator, siteAdministratorCreator},
+		{"creator tier: ServerAdministrator", creator, serverAdministrator},
+		{"explorer tier: Explorer", explorer, explorer},
+		{"explorer tier: SiteAdministratorExplorer", explorer, siteAdministratorExplorer},
+		{"explorer tier: ExplorerCanPublish", explorer, explorerCanPublish},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var puts []recordedPut
+			c := newLicenseTestClient(t, map[string]string{"user-1": tt.curRole}, &puts)
+			l := newLicenseBuilder(c)
+
+			annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(tt.tier))
+			require.NoError(t, err)
+			require.Empty(t, puts, "already-in-tier grant must not write")
+			require.True(t, annos.Contains(&v2.GrantAlreadyExists{}))
+		})
+	}
+}
+
+// TestLicenseGrant_CrossTierNonAdmin covers the decision doc's 3b: a
+// non-admin role outside the target tier is replaced, with exactly one PUT
+// and a GrantReplaced annotation naming the user's previous license grant.
+func TestLicenseGrant_CrossTierNonAdmin(t *testing.T) {
+	t.Parallel()
+
+	var puts []recordedPut
+	c := newLicenseTestClient(t, map[string]string{"user-1": viewer}, &puts)
+	l := newLicenseBuilder(c)
+
+	annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
+	require.NoError(t, err)
+
+	require.Len(t, puts, 1, "cross-tier grant must write exactly once")
+	require.Equal(t, "user-1", puts[0].userID)
+	require.Equal(t, creator, puts[0].siteRole)
+
+	require.False(t, annos.Contains(&v2.GrantAlreadyExists{}))
+
+	var replaced v2.GrantReplaced
+	found, err := annos.Pick(&replaced)
+	require.NoError(t, err)
+	require.True(t, found, "expected a GrantReplaced annotation")
+	require.Equal(t, "license:viewer:member:user:user-1", replaced.GetReplacedGrantId())
+}
+
+// TestLicenseGrant_CrossTierAdmin covers decision 3a: granting a different
+// tier to a user currently holding an admin role must refuse with
+// FailedPrecondition rather than silently stripping admin rights, and must
+// not write.
+func TestLicenseGrant_CrossTierAdmin(t *testing.T) {
+	t.Parallel()
+
+	adminRolesUnderTest := []string{siteAdministrator, siteAdministratorCreator, siteAdministratorExplorer, serverAdministrator}
+
+	for _, role := range adminRolesUnderTest {
+		t.Run(role, func(t *testing.T) {
+			t.Parallel()
+
+			var puts []recordedPut
+			c := newLicenseTestClient(t, map[string]string{"user-1": role}, &puts)
+			l := newLicenseBuilder(c)
+
+			// Pick a target tier the role does not already satisfy.
+			target := explorer
+			if role == siteAdministratorExplorer || role == siteAdministrator {
+				target = creator
+			}
+
+			_, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(target))
+			require.Error(t, err)
+			require.Equal(t, codes.FailedPrecondition, status.Code(err))
+			require.Empty(t, puts, "refused admin cross-tier grant must not write")
+		})
+	}
+}
+
+// TestLicenseGrant_UnknownUser covers decision step 4: a 404 on the
+// single-user GET means there is nothing to grant to.
+func TestLicenseGrant_UnknownUser(t *testing.T) {
+	t.Parallel()
+
+	var puts []recordedPut
+	c := newLicenseTestClient(t, map[string]string{}, &puts)
+	l := newLicenseBuilder(c)
+
+	_, err := l.Grant(context.Background(), testUserPrincipal("ghost"), testLicenseEntitlement(creator))
+	require.Error(t, err)
+	require.Equal(t, codes.NotFound, status.Code(err))
+	require.Empty(t, puts)
+}
+
+// TestLicenseRevoke_Stale covers acceptance criterion 2: revoking a tier the
+// user no longer holds (e.g. a later Grant already moved them elsewhere)
+// must not write and must report GrantAlreadyRevoked.
+func TestLicenseRevoke_Stale(t *testing.T) {
+	t.Parallel()
+
+	var puts []recordedPut
+	c := newLicenseTestClient(t, map[string]string{"user-1": creator}, &puts)
+	l := newLicenseBuilder(c)
+
+	gr := &v2.Grant{
+		Entitlement: testLicenseEntitlement(viewer),
+		Principal:   testUserPrincipal("user-1"),
+	}
+
+	annos, err := l.Revoke(context.Background(), gr)
+	require.NoError(t, err)
+	require.Empty(t, puts, "stale revoke must not write")
+	require.True(t, annos.Contains(&v2.GrantAlreadyRevoked{}))
+}
+
+// TestLicenseRevoke_HoldsTier is the non-regression companion: a user who
+// still holds the tier is unlicensed via exactly one PUT.
+func TestLicenseRevoke_HoldsTier(t *testing.T) {
+	t.Parallel()
+
+	var puts []recordedPut
+	c := newLicenseTestClient(t, map[string]string{"user-1": creator}, &puts)
+	l := newLicenseBuilder(c)
+
+	gr := &v2.Grant{
+		Entitlement: testLicenseEntitlement(creator),
+		Principal:   testUserPrincipal("user-1"),
+	}
+
+	_, err := l.Revoke(context.Background(), gr)
+	require.NoError(t, err)
+	require.Len(t, puts, 1)
+	require.Equal(t, "user-1", puts[0].userID)
+	require.Equal(t, unlicensed, puts[0].siteRole)
+}
+
+// TestLicenseRevoke_UserNotFound covers the 404 case in decision step 1: a
+// deleted user has nothing left to revoke.
+func TestLicenseRevoke_UserNotFound(t *testing.T) {
+	t.Parallel()
+
+	var puts []recordedPut
+	c := newLicenseTestClient(t, map[string]string{}, &puts)
+	l := newLicenseBuilder(c)
+
+	gr := &v2.Grant{
+		Entitlement: testLicenseEntitlement(creator),
+		Principal:   testUserPrincipal("ghost"),
+	}
+
+	annos, err := l.Revoke(context.Background(), gr)
+	require.NoError(t, err)
+	require.Empty(t, puts)
+	require.True(t, annos.Contains(&v2.GrantAlreadyRevoked{}))
 }
