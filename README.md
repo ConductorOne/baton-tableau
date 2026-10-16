@@ -72,6 +72,7 @@ baton resources
 - **Grant expansion**: Group-based permissions on projects, workbooks, and views are supported. When a group has a permission, all members inherit it.
 - **"All Users" group**: Tableau automatically adds every user to the built-in "All Users" group. This group cannot be modified via the API — Grant and Revoke operations on it are not supported. The connector syncs its membership to show each user's base site role.
 - **License revoke constraints**: Revoking a license (setting a user to "Unlicensed") will fail if the user belongs to a group with a "Grant role on sign in" minimum site role. Remove the user from the constraining group first, then revoke the license.
+- **License grant is tier-aware**: A license tier is a view of the user's single site role (e.g. `SiteAdministratorCreator` already satisfies the Creator tier), so granting a tier the user already holds is a no-op — it never overwrites their current role with the tier's base role. Granting a *different* tier to a user currently holding a `SiteAdministrator*`/`ServerAdministrator` role is refused instead of silently demoting them; use the Site Role entitlement to change an admin role explicitly.
 - **Idempotency**: Granting a permission that already exists returns success (not an error). Revoking a permission that is already removed also returns success.
 
 # Credentials Setup
