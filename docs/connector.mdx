@@ -35,6 +35,8 @@ When your Tableau site has per-tier seat capacities configured, C1 tracks the pu
 
 Because a tier is a view of the user's single site role, several roles can satisfy the same tier (for example, `SiteAdministratorCreator` already satisfies the Creator tier). Granting a tier the user already holds is a no-op and never overwrites a more privileged role with the tier's base role. Granting a *different* tier to a user who currently holds a Site Administrator or Server Administrator role is refused rather than silently removing their admin access — use the Site Role entitlement to change an admin role explicitly.
 
+Revoking a tier sets the user's site role to Unlicensed, including when the user's current site role is an administrator role (`SiteAdministratorCreator`, `SiteAdministratorExplorer`, or `ServerAdministrator`). `ServerAdministrator` cannot be re-assigned through the REST API, so use the Site Role entitlement to change admin roles deliberately. Revoking the Unlicensed tier itself is rejected, because Unlicensed is the floor tier and has nothing to remove.
+
 ## Permission inheritance
 
 Tableau uses a permission inheritance model that affects how access is synced and provisioned:

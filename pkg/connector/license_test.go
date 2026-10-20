@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
+	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-tableau/pkg/client"
 	"github.com/stretchr/testify/require"
@@ -121,7 +123,15 @@ func TestCapacitySeats(t *testing.T) {
 // Grant / Revoke (CXH-2368)
 // =============================================================================
 
-const licenseTestSiteID = "site-1"
+const (
+	licenseTestSiteID = "site-1"
+
+	// licenseTestServerError is a pseudo role that makes the mock GetUser return HTTP 500.
+	licenseTestServerError = "__server_error__"
+
+	licenseTestRateLimit     = 100
+	licenseTestRateRemaining = 42
+)
 
 type recordedPut struct {
 	userID   string
@@ -130,7 +140,9 @@ type recordedPut struct {
 
 // newLicenseTestClient starts a mock Tableau API server that authenticates
 // any login, serves GetUser from users (keyed by user ID, valued by current
-// site role; a missing key means a 404), and records every PUT
+// site role; a missing key means a 404 and the licenseTestServerError role
+// means a 500), stamps rate-limit headers on every GET and PUT so tests can check the
+// annotations are propagated, and records every PUT
 // (UpdateUserSiteRole) it receives so tests can assert exact write counts
 // and bodies.
 func newLicenseTestClient(t *testing.T, users map[string]string, puts *[]recordedPut) *client.Client {
@@ -154,11 +166,22 @@ func newLicenseTestClient(t *testing.T, users map[string]string, puts *[]recorde
 			role, ok := users[userID]
 			if !ok {
 				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("X-Ratelimit-Limit", strconv.Itoa(licenseTestRateLimit))
+				w.Header().Set("X-Ratelimit-Remaining", strconv.Itoa(licenseTestRateRemaining))
+				w.Header().Set("X-Ratelimit-Reset", "30")
 				w.WriteHeader(http.StatusNotFound)
 				_, _ = w.Write([]byte(`{"error":{"summary":"Not Found","detail":"user not found","code":"0x1"}}`))
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Ratelimit-Limit", strconv.Itoa(licenseTestRateLimit))
+			w.Header().Set("X-Ratelimit-Remaining", strconv.Itoa(licenseTestRateRemaining))
+			w.Header().Set("X-Ratelimit-Reset", "30")
+			if role == licenseTestServerError {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"error":{"summary":"Internal Server Error","detail":"boom","code":"0x3"}}`))
+				return
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"user": map[string]any{"id": userID, "siteRole": role},
 			})
@@ -172,6 +195,9 @@ func newLicenseTestClient(t *testing.T, users map[string]string, puts *[]recorde
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			*puts = append(*puts, recordedPut{userID: userID, siteRole: body.User.SiteRole})
 			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Ratelimit-Limit", strconv.Itoa(licenseTestRateLimit))
+			w.Header().Set("X-Ratelimit-Remaining", strconv.Itoa(licenseTestRateRemaining))
+			w.Header().Set("X-Ratelimit-Reset", "30")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"user": map[string]any{"id": userID, "siteRole": body.User.SiteRole},
 			})
@@ -199,11 +225,10 @@ func testLicenseEntitlement(tier string) *v2.Entitlement {
 	}
 }
 
-// TestLicenseGrant_AlreadyInTier covers acceptance criteria 1 and 3: granting
-// a tier to a user whose current site role already satisfies that tier must
-// perform no write and report GrantAlreadyExists -- this was the exact shape
-// of the CXH-2368 bug (a SiteAdministratorCreator re-granted Creator was
-// demoted to plain Creator).
+// TestLicenseGrant_AlreadyInTier asserts that granting a tier to a user whose
+// current site role already satisfies that tier performs no write and reports
+// GrantAlreadyExists. This is the CXH-2368 regression: a
+// SiteAdministratorCreator re-granted Creator was demoted to plain Creator.
 func TestLicenseGrant_AlreadyInTier(t *testing.T) {
 	t.Parallel()
 
@@ -236,9 +261,9 @@ func TestLicenseGrant_AlreadyInTier(t *testing.T) {
 	}
 }
 
-// TestLicenseGrant_CrossTierNonAdmin covers the decision doc's 3b: a
-// non-admin role outside the target tier is replaced, with exactly one PUT
-// and a GrantReplaced annotation naming the user's previous license grant.
+// TestLicenseGrant_CrossTierNonAdmin asserts that a non-admin role outside the
+// target tier is replaced, with exactly one PUT and a GrantReplaced annotation
+// naming the user's previous license grant.
 func TestLicenseGrant_CrossTierNonAdmin(t *testing.T) {
 	t.Parallel()
 
@@ -262,10 +287,9 @@ func TestLicenseGrant_CrossTierNonAdmin(t *testing.T) {
 	require.Equal(t, "license:viewer:member:user:user-1", replaced.GetReplacedGrantId())
 }
 
-// TestLicenseGrant_CrossTierAdmin covers decision 3a: granting a different
-// tier to a user currently holding an admin role must refuse with
-// FailedPrecondition rather than silently stripping admin rights, and must
-// not write.
+// TestLicenseGrant_CrossTierAdmin asserts that granting a different tier to a
+// user currently holding an admin role is refused with FailedPrecondition
+// rather than silently stripping admin rights, and does not write.
 func TestLicenseGrant_CrossTierAdmin(t *testing.T) {
 	t.Parallel()
 
@@ -293,8 +317,8 @@ func TestLicenseGrant_CrossTierAdmin(t *testing.T) {
 	}
 }
 
-// TestLicenseGrant_UnknownUser covers decision step 4: a 404 on the
-// single-user GET means there is nothing to grant to.
+// TestLicenseGrant_UnknownUser asserts that a 404 on the single-user GET means
+// there is nothing to grant to.
 func TestLicenseGrant_UnknownUser(t *testing.T) {
 	t.Parallel()
 
@@ -308,9 +332,9 @@ func TestLicenseGrant_UnknownUser(t *testing.T) {
 	require.Empty(t, puts)
 }
 
-// TestLicenseRevoke_Stale covers acceptance criterion 2: revoking a tier the
-// user no longer holds (e.g. a later Grant already moved them elsewhere)
-// must not write and must report GrantAlreadyRevoked.
+// TestLicenseRevoke_Stale asserts that revoking a tier the user no longer
+// holds (e.g. a later Grant already moved them elsewhere) does not write and
+// reports GrantAlreadyRevoked.
 func TestLicenseRevoke_Stale(t *testing.T) {
 	t.Parallel()
 
@@ -350,8 +374,8 @@ func TestLicenseRevoke_HoldsTier(t *testing.T) {
 	require.Equal(t, unlicensed, puts[0].siteRole)
 }
 
-// TestLicenseRevoke_UserNotFound covers the 404 case in decision step 1: a
-// deleted user has nothing left to revoke.
+// TestLicenseRevoke_UserNotFound asserts that a deleted user (404) has nothing
+// left to revoke.
 func TestLicenseRevoke_UserNotFound(t *testing.T) {
 	t.Parallel()
 
@@ -368,4 +392,224 @@ func TestLicenseRevoke_UserNotFound(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, puts)
 	require.True(t, annos.Contains(&v2.GrantAlreadyRevoked{}))
+}
+
+// requireSingleRateLimit asserts annos carries exactly one RateLimitDescription
+// and that it is the one the mock GET responses stamped.
+func requireSingleRateLimit(t *testing.T, annos annotations.Annotations) {
+	t.Helper()
+
+	count := 0
+	for _, a := range annos {
+		if a.MessageIs(&v2.RateLimitDescription{}) {
+			count++
+		}
+	}
+	require.Equal(t, 1, count, "expected exactly one RateLimitDescription")
+
+	var rl v2.RateLimitDescription
+	found, err := annos.Pick(&rl)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.EqualValues(t, licenseTestRateLimit, rl.GetLimit())
+	require.EqualValues(t, licenseTestRateRemaining, rl.GetRemaining())
+}
+
+// TestLicense_GetUserServerError asserts that a non-404 failure reading the
+// user surfaces as an error (not NotFound) and never falls through to a write.
+func TestLicense_GetUserServerError(t *testing.T) {
+	t.Parallel()
+
+	t.Run("grant", func(t *testing.T) {
+		t.Parallel()
+
+		var puts []recordedPut
+		c := newLicenseTestClient(t, map[string]string{"user-1": licenseTestServerError}, &puts)
+		l := newLicenseBuilder(c)
+
+		_, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
+		require.Error(t, err)
+		require.NotEqual(t, codes.NotFound, status.Code(err))
+		require.Empty(t, puts, "failed read must not write")
+	})
+
+	t.Run("revoke", func(t *testing.T) {
+		t.Parallel()
+
+		var puts []recordedPut
+		c := newLicenseTestClient(t, map[string]string{"user-1": licenseTestServerError}, &puts)
+		l := newLicenseBuilder(c)
+
+		annos, err := l.Revoke(context.Background(), &v2.Grant{
+			Entitlement: testLicenseEntitlement(creator),
+			Principal:   testUserPrincipal("user-1"),
+		})
+		require.Error(t, err)
+		require.NotEqual(t, codes.NotFound, status.Code(err))
+		require.False(t, annos.Contains(&v2.GrantAlreadyRevoked{}), "a server error must not be reported as already revoked")
+		require.Empty(t, puts, "failed read must not write")
+	})
+}
+
+// TestLicenseGrant_RoleOutsideEveryTier asserts that a current role belonging
+// to no tier (e.g. Guest) is overwritten with one PUT and, since there is no
+// previous license grant to name, no GrantReplaced.
+func TestLicenseGrant_RoleOutsideEveryTier(t *testing.T) {
+	t.Parallel()
+
+	var puts []recordedPut
+	c := newLicenseTestClient(t, map[string]string{"user-1": "Guest"}, &puts)
+	l := newLicenseBuilder(c)
+
+	annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
+	require.NoError(t, err)
+	require.Equal(t, []recordedPut{{userID: "user-1", siteRole: creator}}, puts)
+	require.False(t, annos.Contains(&v2.GrantReplaced{}))
+	require.False(t, annos.Contains(&v2.GrantAlreadyExists{}))
+}
+
+// TestLicenseGrant_ExplorerCanPublishToCreator asserts that ExplorerCanPublish
+// counts as the Explorer tier: granting Creator writes Creator once and
+// reports the Explorer license grant as replaced.
+func TestLicenseGrant_ExplorerCanPublishToCreator(t *testing.T) {
+	t.Parallel()
+
+	var puts []recordedPut
+	c := newLicenseTestClient(t, map[string]string{"user-1": explorerCanPublish}, &puts)
+	l := newLicenseBuilder(c)
+
+	annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
+	require.NoError(t, err)
+	require.Equal(t, []recordedPut{{userID: "user-1", siteRole: creator}}, puts)
+
+	var replaced v2.GrantReplaced
+	found, err := annos.Pick(&replaced)
+	require.NoError(t, err)
+	require.True(t, found, "expected a GrantReplaced annotation")
+	require.Equal(t, "license:explorer:member:user:user-1", replaced.GetReplacedGrantId())
+}
+
+// TestLicense_PropagatesGetUserAnnotations asserts that the rate-limit
+// annotations from the initial GetUser read are present on every result,
+// merged without duplicating the PUT's own RateLimitDescription.
+func TestLicense_PropagatesGetUserAnnotations(t *testing.T) {
+	t.Parallel()
+
+	revokeOf := func(tier string) *v2.Grant {
+		return &v2.Grant{Entitlement: testLicenseEntitlement(tier), Principal: testUserPrincipal("user-1")}
+	}
+
+	t.Run("grant already exists", func(t *testing.T) {
+		t.Parallel()
+
+		var puts []recordedPut
+		l := newLicenseBuilder(newLicenseTestClient(t, map[string]string{"user-1": creator}, &puts))
+		annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
+		require.NoError(t, err)
+		require.True(t, annos.Contains(&v2.GrantAlreadyExists{}))
+		requireSingleRateLimit(t, annos)
+	})
+
+	t.Run("grant refused for admin role", func(t *testing.T) {
+		t.Parallel()
+
+		var puts []recordedPut
+		l := newLicenseBuilder(newLicenseTestClient(t, map[string]string{"user-1": siteAdministratorCreator}, &puts))
+		annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(explorer))
+		require.Equal(t, codes.FailedPrecondition, status.Code(err))
+		requireSingleRateLimit(t, annos)
+	})
+
+	t.Run("grant user not found", func(t *testing.T) {
+		t.Parallel()
+
+		var puts []recordedPut
+		l := newLicenseBuilder(newLicenseTestClient(t, map[string]string{}, &puts))
+		annos, err := l.Grant(context.Background(), testUserPrincipal("ghost"), testLicenseEntitlement(creator))
+		require.Equal(t, codes.NotFound, status.Code(err))
+		requireSingleRateLimit(t, annos)
+	})
+
+	t.Run("grant write path", func(t *testing.T) {
+		t.Parallel()
+
+		var puts []recordedPut
+		l := newLicenseBuilder(newLicenseTestClient(t, map[string]string{"user-1": viewer}, &puts))
+		annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
+		require.NoError(t, err)
+		require.True(t, annos.Contains(&v2.GrantReplaced{}))
+		requireSingleRateLimit(t, annos)
+	})
+
+	t.Run("revoke already revoked", func(t *testing.T) {
+		t.Parallel()
+
+		var puts []recordedPut
+		l := newLicenseBuilder(newLicenseTestClient(t, map[string]string{"user-1": creator}, &puts))
+		annos, err := l.Revoke(context.Background(), revokeOf(viewer))
+		require.NoError(t, err)
+		require.True(t, annos.Contains(&v2.GrantAlreadyRevoked{}))
+		requireSingleRateLimit(t, annos)
+	})
+
+	t.Run("revoke user not found", func(t *testing.T) {
+		t.Parallel()
+
+		var puts []recordedPut
+		l := newLicenseBuilder(newLicenseTestClient(t, map[string]string{}, &puts))
+		annos, err := l.Revoke(context.Background(), &v2.Grant{Entitlement: testLicenseEntitlement(creator), Principal: testUserPrincipal("ghost")})
+		require.NoError(t, err)
+		require.True(t, annos.Contains(&v2.GrantAlreadyRevoked{}))
+		requireSingleRateLimit(t, annos)
+	})
+
+	t.Run("revoke write path", func(t *testing.T) {
+		t.Parallel()
+
+		var puts []recordedPut
+		l := newLicenseBuilder(newLicenseTestClient(t, map[string]string{"user-1": creator}, &puts))
+		annos, err := l.Revoke(context.Background(), revokeOf(creator))
+		require.NoError(t, err)
+		require.Len(t, puts, 1)
+		requireSingleRateLimit(t, annos)
+	})
+}
+
+// TestLicenseRevoke_UnlicensedTier asserts that Unlicensed is the floor tier:
+// revoking it from an Unlicensed user is rejected without a write, while
+// revoking it from a user who holds some other tier is a stale revoke.
+func TestLicenseRevoke_UnlicensedTier(t *testing.T) {
+	t.Parallel()
+
+	t.Run("user is unlicensed", func(t *testing.T) {
+		t.Parallel()
+
+		var puts []recordedPut
+		l := newLicenseBuilder(newLicenseTestClient(t, map[string]string{"user-1": unlicensed}, &puts))
+
+		annos, err := l.Revoke(context.Background(), &v2.Grant{
+			Entitlement: testLicenseEntitlement(unlicensed),
+			Principal:   testUserPrincipal("user-1"),
+		})
+		require.Error(t, err)
+		require.Equal(t, codes.FailedPrecondition, status.Code(err))
+		require.Contains(t, err.Error(), "Unlicensed is the floor tier")
+		require.Empty(t, puts, "rejected revoke must not write")
+		requireSingleRateLimit(t, annos)
+	})
+
+	t.Run("user holds another tier", func(t *testing.T) {
+		t.Parallel()
+
+		var puts []recordedPut
+		l := newLicenseBuilder(newLicenseTestClient(t, map[string]string{"user-1": creator}, &puts))
+
+		annos, err := l.Revoke(context.Background(), &v2.Grant{
+			Entitlement: testLicenseEntitlement(unlicensed),
+			Principal:   testUserPrincipal("user-1"),
+		})
+		require.NoError(t, err)
+		require.Empty(t, puts)
+		require.True(t, annos.Contains(&v2.GrantAlreadyRevoked{}))
+	})
 }
