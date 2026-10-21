@@ -269,9 +269,7 @@ func (l *licenseBuilder) Grants(ctx context.Context, resource *v2.Resource, opts
 // roles satisfy which tier, so a license tier is a derived view of that one
 // role rather than an independent attribute. Grant therefore reads the user's
 // current role before writing:
-//   - already in the target tier -> no write, GrantAlreadyExists (this was
-//     CXH-2368 regression: granting a held tier used to overwrite e.g.
-//     SiteAdministratorCreator with plain Creator).
+//   - already in the target tier -> no write, GrantAlreadyExists.
 //   - current role is an admin role outside the tier -> refuse with
 //     FailedPrecondition; a license grant must not double as a silent
 //     demotion, and ServerAdministrator cannot be restored via this API.

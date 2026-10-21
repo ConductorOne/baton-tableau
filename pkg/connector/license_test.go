@@ -120,7 +120,7 @@ func TestCapacitySeats(t *testing.T) {
 }
 
 // =============================================================================
-// Grant / Revoke (CXH-2368)
+// Grant / Revoke
 // =============================================================================
 
 const (
@@ -227,8 +227,7 @@ func testLicenseEntitlement(tier string) *v2.Entitlement {
 
 // TestLicenseGrant_AlreadyInTier asserts that granting a tier to a user whose
 // current site role already satisfies that tier performs no write and reports
-// GrantAlreadyExists. This is the CXH-2368 regression: a
-// SiteAdministratorCreator re-granted Creator was demoted to plain Creator.
+// GrantAlreadyExists.
 func TestLicenseGrant_AlreadyInTier(t *testing.T) {
 	t.Parallel()
 
@@ -353,8 +352,8 @@ func TestLicenseRevoke_Stale(t *testing.T) {
 	require.True(t, annos.Contains(&v2.GrantAlreadyRevoked{}))
 }
 
-// TestLicenseRevoke_HoldsTier is the non-regression companion: a user who
-// still holds the tier is unlicensed via exactly one PUT.
+// TestLicenseRevoke_HoldsTier asserts that a user who still holds the tier is
+// unlicensed via exactly one PUT.
 func TestLicenseRevoke_HoldsTier(t *testing.T) {
 	t.Parallel()
 
