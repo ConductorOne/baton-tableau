@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -14,6 +15,8 @@ import (
 	"github.com/conductorone/baton-tableau/pkg/client"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var licenses = []string{creator, explorer, viewer, unlicensed}
@@ -32,6 +35,29 @@ var RolesPerLicense = map[string][]string{
 	explorer:   {explorer, siteAdministratorExplorer, explorerCanPublish, siteAdministrator},
 	viewer:     {viewer},
 	unlicensed: {unlicensed},
+}
+
+// adminLicenseRoles are the site roles a cross-tier license Grant must never
+// silently demote. A license tier is a derived view of a user's single site
+// role, so granting a different tier is itself a role change; stripping an
+// admin role as a side effect of that change would be an unannounced
+// privilege reduction. Use the Site Role entitlement to change an admin role
+// explicitly instead.
+var adminLicenseRoles = map[string]bool{
+	siteAdministrator:         true,
+	siteAdministratorCreator:  true,
+	siteAdministratorExplorer: true,
+	serverAdministrator:       true,
+}
+
+// tierForRole returns the license tier whose RolesPerLicense set contains role.
+func tierForRole(role string) (string, bool) {
+	for _, tier := range licenses {
+		if slices.Contains(RolesPerLicense[tier], role) {
+			return tier, true
+		}
+	}
+	return "", false
 }
 
 // licenseCapacity returns the raw per-tier capacity string, or nil when the site exposes none.
@@ -238,25 +264,112 @@ func (l *licenseBuilder) Grants(ctx context.Context, resource *v2.Resource, opts
 }
 
 // Grant assigns the target license tier by setting the user's site role.
+//
+// A Tableau user has exactly one site role, and RolesPerLicense groups which
+// roles satisfy which tier, so a license tier is a derived view of that one
+// role rather than an independent attribute. Grant therefore reads the user's
+// current role before writing:
+//   - already in the target tier -> no write, GrantAlreadyExists.
+//   - current role is an admin role outside the tier -> refuse with
+//     FailedPrecondition; a license grant must not double as a silent
+//     demotion, and ServerAdministrator cannot be restored via this API.
+//   - otherwise -> write the tier's base role and, when the user's previous
+//     role belonged to another tier, report GrantReplaced naming the license
+//     grant the write displaced (tiers are exclusive, so a cross-tier grant
+//     is itself the requested role change).
+//
+// Rate-limit annotations from the initial read are merged into every result.
 func (l *licenseBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
-	licenseName, ok := licensesMap[entitlement.Resource.Id.Resource]
+	log := ctxzap.Extract(ctx)
+
+	targetTier, ok := licensesMap[entitlement.Resource.Id.Resource]
 	if !ok {
 		return nil, fmt.Errorf("unknown license %s", entitlement.Resource.Id.Resource)
 	}
 
-	annos, err := l.client.UpdateUserSiteRole(ctx, principal.Id.Resource, licenseName)
+	user, getAnnos, err := l.client.GetUser(ctx, principal.Id.Resource)
 	if err != nil {
-		return annos, fmt.Errorf("failed to grant %s license to user %s: %w", licenseName, principal.Id.Resource, err)
+		if client.IsNotFoundError(err) {
+			return getAnnos, status.Errorf(codes.NotFound, "license: cannot grant %s: user %s not found", targetTier, principal.Id.Resource)
+		}
+		return getAnnos, fmt.Errorf("failed to read user %s for license grant: %w", principal.Id.Resource, err)
+	}
+
+	if slices.Contains(RolesPerLicense[targetTier], user.SiteRole) {
+		log.Debug("license grant: user already in target tier, no write needed",
+			zap.String("user_id", principal.Id.Resource), zap.String("tier", targetTier), zap.String("site_role", user.SiteRole))
+		return mergeAnnotations(getAnnos, annotations.New(&v2.GrantAlreadyExists{})), nil
+	}
+
+	if adminLicenseRoles[user.SiteRole] {
+		log.Warn("license grant: refusing to move an admin role across license tiers",
+			zap.String("user_id", principal.Id.Resource), zap.String("tier", targetTier), zap.String("site_role", user.SiteRole))
+		return getAnnos, status.Errorf(codes.FailedPrecondition,
+			"license: cannot grant %s to user %s: current site role %q is an administrative role; use the Site Role entitlement to change it explicitly",
+			targetTier, principal.Id.Resource, user.SiteRole)
+	}
+
+	putAnnos, err := l.client.UpdateUserSiteRole(ctx, principal.Id.Resource, targetTier)
+	annos := mergeAnnotations(getAnnos, putAnnos)
+	if err != nil {
+		return annos, fmt.Errorf("failed to grant %s license to user %s: %w", targetTier, principal.Id.Resource, err)
+	}
+
+	if oldTier, ok := tierForRole(user.SiteRole); ok && oldTier != targetTier {
+		oldResource := &v2.Resource{
+			Id: &v2.ResourceId{
+				ResourceType: resourceTypeLicense.Id,
+				Resource:     strings.ToLower(oldTier),
+			},
+		}
+		oldEntitlement := ent.NewAssignmentEntitlement(oldResource, memberEntitlement)
+		annos.Append(&v2.GrantReplaced{ReplacedGrantId: grant.NewGrantID(principal.Id, oldEntitlement)})
 	}
 
 	return annos, nil
 }
 
 // Revoke removes the license by setting the user's site role to Unlicensed.
-func (l *licenseBuilder) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
-	principalID := grant.Principal.Id.Resource
+//
+// Revoke reads the user's current role first: a 404, or a role that has
+// already moved out of this tier (e.g. a later Grant replaced it, see Grant's
+// GrantReplaced annotation), means there is nothing left to revoke. Writing
+// Unlicensed in that case would wipe out access this revoke was never asked
+// to touch. Revoking the Unlicensed tier from a user who is Unlicensed is
+// rejected with FailedPrecondition: it is the floor tier and has nothing to
+// remove. Rate-limit annotations from the initial read are merged into every
+// result.
+func (l *licenseBuilder) Revoke(ctx context.Context, g *v2.Grant) (annotations.Annotations, error) {
+	log := ctxzap.Extract(ctx)
+	principalID := g.Principal.Id.Resource
 
-	annos, err := l.client.UpdateUserSiteRole(ctx, principalID, unlicensed)
+	tier, ok := licensesMap[g.Entitlement.Resource.Id.Resource]
+	if !ok {
+		return nil, fmt.Errorf("unknown license %s", g.Entitlement.Resource.Id.Resource)
+	}
+
+	user, getAnnos, err := l.client.GetUser(ctx, principalID)
+	if err != nil {
+		if client.IsNotFoundError(err) {
+			log.Debug("license revoke: user not found, nothing to revoke", zap.String("user_id", principalID))
+			return mergeAnnotations(getAnnos, annotations.New(&v2.GrantAlreadyRevoked{})), nil
+		}
+		return getAnnos, fmt.Errorf("failed to read user %s for license revoke: %w", principalID, err)
+	}
+
+	if !slices.Contains(RolesPerLicense[tier], user.SiteRole) {
+		log.Debug("license revoke: user no longer in tier, nothing to revoke",
+			zap.String("user_id", principalID), zap.String("tier", tier), zap.String("site_role", user.SiteRole))
+		return mergeAnnotations(getAnnos, annotations.New(&v2.GrantAlreadyRevoked{})), nil
+	}
+
+	if tier == unlicensed {
+		return getAnnos, status.Errorf(codes.FailedPrecondition,
+			"license: cannot revoke the Unlicensed tier from user %s: Unlicensed is the floor tier and has nothing to remove", principalID)
+	}
+
+	putAnnos, err := l.client.UpdateUserSiteRole(ctx, principalID, unlicensed)
+	annos := mergeAnnotations(getAnnos, putAnnos)
 	if err != nil {
 		return annos, fmt.Errorf("failed to revoke license from user %s: %w", principalID, err)
 	}
