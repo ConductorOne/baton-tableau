@@ -335,9 +335,10 @@ func (l *licenseBuilder) Grant(ctx context.Context, principal *v2.Resource, enti
 // GrantReplaced annotation), means there is nothing left to revoke. Writing
 // Unlicensed in that case would wipe out access this revoke was never asked
 // to touch. Revoking the Unlicensed tier from a user who is Unlicensed is
-// rejected with FailedPrecondition: it is the floor tier and has nothing to
-// remove. Rate-limit annotations from the initial read are merged into every
-// result.
+// likewise a no-op reported as GrantAlreadyRevoked: it is the floor tier and
+// has nothing to remove, and an error would only fail an offboarding task
+// with nothing actionable upstream. Rate-limit annotations from the initial
+// read are merged into every result.
 func (l *licenseBuilder) Revoke(ctx context.Context, g *v2.Grant) (annotations.Annotations, error) {
 	log := ctxzap.Extract(ctx)
 	principalID := g.Principal.Id.Resource
@@ -363,8 +364,9 @@ func (l *licenseBuilder) Revoke(ctx context.Context, g *v2.Grant) (annotations.A
 	}
 
 	if tier == unlicensed {
-		return getAnnos, status.Errorf(codes.FailedPrecondition,
-			"license: cannot revoke the Unlicensed tier from user %s: Unlicensed is the floor tier and has nothing to remove", principalID)
+		log.Debug("license revoke: user already Unlicensed (floor tier), nothing to remove",
+			zap.String("user_id", principalID))
+		return mergeAnnotations(getAnnos, annotations.New(&v2.GrantAlreadyRevoked{})), nil
 	}
 
 	putAnnos, err := l.client.UpdateUserSiteRole(ctx, principalID, unlicensed)

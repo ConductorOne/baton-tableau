@@ -586,8 +586,9 @@ func TestLicense_PropagatesGetUserAnnotations(t *testing.T) {
 }
 
 // TestLicenseRevoke_UnlicensedTier asserts that Unlicensed is the floor tier:
-// revoking it from an Unlicensed user is rejected without a write, while
-// revoking it from a user who holds some other tier is a stale revoke.
+// revoking it from an Unlicensed user is an annotated no-op (GrantAlreadyRevoked,
+// no write, nil error) because there is nothing left to remove, and revoking it
+// from a user who holds some other tier is a stale revoke.
 func TestLicenseRevoke_UnlicensedTier(t *testing.T) {
 	t.Parallel()
 
@@ -601,10 +602,9 @@ func TestLicenseRevoke_UnlicensedTier(t *testing.T) {
 			Entitlement: testLicenseEntitlement(unlicensed),
 			Principal:   testUserPrincipal("user-1"),
 		})
-		require.Error(t, err)
-		require.Equal(t, codes.FailedPrecondition, status.Code(err))
-		require.Contains(t, err.Error(), "Unlicensed is the floor tier")
-		require.Empty(t, puts, "rejected revoke must not write")
+		require.NoError(t, err)
+		require.True(t, annos.Contains(&v2.GrantAlreadyRevoked{}))
+		require.Empty(t, puts, "floor-tier revoke must not write")
 		requireSingleRateLimit(t, annos)
 	})
 
