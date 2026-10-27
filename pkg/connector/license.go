@@ -303,8 +303,6 @@ func (l *licenseBuilder) Grant(ctx context.Context, principal *v2.Resource, enti
 	}
 
 	if adminLicenseRoles[user.SiteRole] {
-		log.Warn("license grant: refusing to move an admin role across license tiers",
-			zap.String("user_id", principal.Id.Resource), zap.String("tier", targetTier), zap.String("site_role", user.SiteRole))
 		return getAnnos, status.Errorf(codes.FailedPrecondition,
 			"license: cannot grant %s to user %s: current site role %q is an administrative role; use the Site Role entitlement to change it explicitly",
 			targetTier, principal.Id.Resource, user.SiteRole)
