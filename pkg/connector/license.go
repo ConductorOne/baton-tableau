@@ -37,12 +37,7 @@ var RolesPerLicense = map[string][]string{
 	unlicensed: {unlicensed},
 }
 
-// adminLicenseRoles are the site roles a cross-tier license Grant must never
-// silently demote. A license tier is a derived view of a user's single site
-// role, so granting a different tier is itself a role change; stripping an
-// admin role as a side effect of that change would be an unannounced
-// privilege reduction. Use the Site Role entitlement to change an admin role
-// explicitly instead.
+// adminLicenseRoles are refused on a cross-tier license Grant.
 var adminLicenseRoles = map[string]bool{
 	siteAdministrator:         true,
 	siteAdministratorCreator:  true,
@@ -263,23 +258,11 @@ func (l *licenseBuilder) Grants(ctx context.Context, resource *v2.Resource, opts
 	return rv, &rs.SyncOpResults{NextPageToken: nextToken}, nil
 }
 
-// Grant assigns the target license tier by setting the user's site role.
-//
-// A Tableau user has exactly one site role, and RolesPerLicense groups which
-// roles satisfy which tier, so a license tier is a derived view of that one
-// role rather than an independent attribute. Grant therefore reads the user's
-// current role before writing:
-//   - already in the target tier -> no write, GrantAlreadyExists.
-//   - current role is an admin role outside the tier -> refuse with
-//     FailedPrecondition; a license grant must not double as a silent
-//     demotion. ServerAdministrator exists only on Tableau Server and is
-//     not assigned by this connector.
-//   - otherwise -> write the tier's base role and, when the user's previous
-//     role belonged to another tier, report GrantReplaced naming the license
-//     grant the write displaced (tiers are exclusive, so a cross-tier grant
-//     is itself the requested role change).
-//
-// Rate-limit annotations from the initial read are merged into every result.
+// Grant sets the user's site role to the tier's base role. It reads the user
+// first: a missing user returns NotFound, a role already in the tier returns
+// GrantAlreadyExists without writing, an admin role fails with
+// FailedPrecondition, and otherwise it writes, reporting GrantReplaced when the
+// previous role belonged to a known tier.
 func (l *licenseBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
 	log := ctxzap.Extract(ctx)
 
@@ -328,17 +311,9 @@ func (l *licenseBuilder) Grant(ctx context.Context, principal *v2.Resource, enti
 	return annos, nil
 }
 
-// Revoke removes the license by setting the user's site role to Unlicensed.
-//
-// Revoke reads the user's current role first: a 404, or a role that has
-// already moved out of this tier (e.g. a later Grant replaced it, see Grant's
-// GrantReplaced annotation), means there is nothing left to revoke. Writing
-// Unlicensed in that case would wipe out access this revoke was never asked
-// to touch. Revoking the Unlicensed tier from a user who is Unlicensed is
-// likewise a no-op reported as GrantAlreadyRevoked: it is the floor tier and
-// has nothing to remove, and an error would only fail an offboarding task
-// with nothing actionable upstream. Rate-limit annotations from the initial
-// read are merged into every result.
+// Revoke sets the user's site role to Unlicensed. It reads the user first and
+// returns GrantAlreadyRevoked without writing when the user is missing, no
+// longer in the tier, or already Unlicensed.
 func (l *licenseBuilder) Revoke(ctx context.Context, g *v2.Grant) (annotations.Annotations, error) {
 	log := ctxzap.Extract(ctx)
 	principalID := g.Principal.Id.Resource
