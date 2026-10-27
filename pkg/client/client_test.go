@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -40,9 +39,7 @@ func TestGetUser_Found(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(userResponse{
-			User: User{ID: "user-1", Email: "user1@example.com", SiteRole: "SiteAdministratorCreator"},
-		})
+		_, _ = w.Write([]byte(`{"user":{"id":"user-1","email":"user1@example.com","siteRole":"SiteAdministratorCreator"}}`))
 	}))
 	t.Cleanup(srv.Close)
 

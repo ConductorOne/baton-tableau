@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -133,6 +134,11 @@ const (
 	licenseTestRateRemaining = 42
 )
 
+// licenseTestUsersMu guards the users maps handed to newLicenseTestClient: the
+// mock server reads and applies PUTs to them from its own goroutine while a
+// test may change a role between calls.
+var licenseTestUsersMu sync.Mutex
+
 type recordedPut struct {
 	userID   string
 	siteRole string
@@ -140,7 +146,7 @@ type recordedPut struct {
 
 // newLicenseTestClient starts a mock Tableau API server that authenticates
 // any login, serves GetUser from users (keyed by user ID, valued by current
-// site role; a missing key means a 404 and the licenseTestServerError role
+// site role, updated by every PUT; a missing key means a 404 and the licenseTestServerError role
 // means a 500), stamps rate-limit headers on every GET and PUT so tests can check the
 // annotations are propagated, and records every PUT
 // (UpdateUserSiteRole) it receives so tests can assert exact write counts
@@ -163,7 +169,9 @@ func newLicenseTestClient(t *testing.T, users map[string]string, puts *[]recorde
 			})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, usersPathPrefix):
 			userID := strings.TrimPrefix(r.URL.Path, usersPathPrefix)
+			licenseTestUsersMu.Lock()
 			role, ok := users[userID]
+			licenseTestUsersMu.Unlock()
 			if !ok {
 				w.Header().Set("Content-Type", "application/json")
 				w.Header().Set("X-Ratelimit-Limit", strconv.Itoa(licenseTestRateLimit))
@@ -193,7 +201,10 @@ func newLicenseTestClient(t *testing.T, users map[string]string, puts *[]recorde
 				} `json:"user"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
+			licenseTestUsersMu.Lock()
 			*puts = append(*puts, recordedPut{userID: userID, siteRole: body.User.SiteRole})
+			users[userID] = body.User.SiteRole
+			licenseTestUsersMu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Ratelimit-Limit", strconv.Itoa(licenseTestRateLimit))
 			w.Header().Set("X-Ratelimit-Remaining", strconv.Itoa(licenseTestRateRemaining))
@@ -611,4 +622,55 @@ func TestLicenseRevoke_UnlicensedTier(t *testing.T) {
 		require.Empty(t, puts)
 		require.True(t, annos.Contains(&v2.GrantAlreadyRevoked{}))
 	})
+}
+
+// TestLicense_GrantThenRevokeSameClient asserts that a revoke following a
+// grant on one client reads the role the grant wrote rather than a cached
+// pre-grant response.
+func TestLicense_GrantThenRevokeSameClient(t *testing.T) {
+	t.Parallel()
+
+	var puts []recordedPut
+	c := newLicenseTestClient(t, map[string]string{"user-1": viewer}, &puts)
+	l := newLicenseBuilder(c)
+
+	_, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
+	require.NoError(t, err)
+	require.Len(t, puts, 1)
+	require.Equal(t, creator, puts[0].siteRole)
+
+	annos, err := l.Revoke(context.Background(), &v2.Grant{
+		Entitlement: testLicenseEntitlement(creator),
+		Principal:   testUserPrincipal("user-1"),
+	})
+	require.NoError(t, err)
+	require.False(t, annos.Contains(&v2.GrantAlreadyRevoked{}), "revoke must see the granted role")
+	require.Len(t, puts, 2)
+	require.Equal(t, unlicensed, puts[1].siteRole)
+}
+
+// TestLicenseGrant_RoleChangedBetweenGrants asserts that a second grant on the
+// same client sees a role changed outside the connector after the first read.
+func TestLicenseGrant_RoleChangedBetweenGrants(t *testing.T) {
+	t.Parallel()
+
+	var puts []recordedPut
+	users := map[string]string{"user-1": siteAdministratorCreator}
+	c := newLicenseTestClient(t, users, &puts)
+	l := newLicenseBuilder(c)
+
+	annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
+	require.NoError(t, err)
+	require.True(t, annos.Contains(&v2.GrantAlreadyExists{}))
+	require.Empty(t, puts)
+
+	licenseTestUsersMu.Lock()
+	users["user-1"] = viewer
+	licenseTestUsersMu.Unlock()
+
+	annos, err = l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
+	require.NoError(t, err)
+	require.False(t, annos.Contains(&v2.GrantAlreadyExists{}), "grant must see the externally changed role")
+	require.Len(t, puts, 1)
+	require.Equal(t, creator, puts[0].siteRole)
 }
