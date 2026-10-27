@@ -272,7 +272,8 @@ func (l *licenseBuilder) Grants(ctx context.Context, resource *v2.Resource, opts
 //   - already in the target tier -> no write, GrantAlreadyExists.
 //   - current role is an admin role outside the tier -> refuse with
 //     FailedPrecondition; a license grant must not double as a silent
-//     demotion, and ServerAdministrator cannot be restored via this API.
+//     demotion. ServerAdministrator exists only on Tableau Server and is
+//     not assigned by this connector.
 //   - otherwise -> write the tier's base role and, when the user's previous
 //     role belonged to another tier, report GrantReplaced naming the license
 //     grant the write displaced (tiers are exclusive, so a cross-tier grant

@@ -135,7 +135,7 @@
 > | Viewer | `Viewer` | Yes | |
 > | Unlicensed | `Unlicensed` | Yes | |
 > | Site Administrator | `SiteAdministrator` | Yes | Legacy role, maps to SiteAdministratorExplorer |
-> | Server Administrator | `ServerAdministrator` | Sync only | Server-level role, appears in sync but cannot be assigned via the REST API |
+> | Server Administrator | `ServerAdministrator` | Sync only | Exists only on Tableau Server; appears in sync, and this connector does not assign it |
 
 ### Users
 
@@ -205,7 +205,7 @@
 > | Viewer | `Viewer` |
 > | Unlicensed | `Unlicensed` |
 >
-> `SiteAdministrator` is a legacy role (maps to `SiteAdministratorExplorer`) that cannot be used with the Tableau REST API filter endpoint, so the connector fetches all users and filters client-side when processing Explorer license grants. `ServerAdministrator` consumes a Creator license per Tableau's licensing model and is counted under the Creator tier (sync only — it cannot be assigned via the sites API). See [Tableau REST API Site Roles](https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_new_site_roles.htm) for the full role reference.
+> `SiteAdministrator` is a legacy role (maps to `SiteAdministratorExplorer`) that cannot be used with the Tableau REST API filter endpoint, so the connector fetches all users and filters client-side when processing Explorer license grants. `ServerAdministrator` consumes a Creator license per Tableau's licensing model and is counted under the Creator tier (sync only — this connector does not assign it). See [Tableau REST API Site Roles](https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_new_site_roles.htm) for the full role reference.
 
 > **Important — License Revoke Constraints**: Revoking a license (setting a user to "Unlicensed") will fail if the user belongs to a group with "Grant role on sign in" configured. Tableau enforces that a user's site role cannot be lower than the minimum site role required by any group they belong to. The error message from Tableau will be: *"Site role of link user that belongs to license upon login cannot be lower than minimum site role of group"*. To resolve this, remove the user from the constraining group first, then revoke the license.
 
@@ -319,7 +319,7 @@
 
 - Users with unknown or unexpected site roles (not in the connector's role map) are **skipped** during site grant sync instead of creating malformed grants. A warning is logged.
 - The role map covers all valid [Tableau REST API site roles](https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_new_site_roles.htm): `SiteAdministratorCreator`, `SiteAdministratorExplorer`, `SiteAdministrator`, `Creator`, `Explorer`, `ExplorerCanPublish`, `Viewer`, `Unlicensed`.
-- `ServerAdministrator` is synced (read-only) and consumes a Creator license, but it is never a grant target — the assignable license is Creator, and the `ServerAdministrator` role itself cannot be set via the sites API.
+- `ServerAdministrator` is synced (read-only) and consumes a Creator license, but it is never a grant target — the assignable license is Creator, and this connector does not assign the `ServerAdministrator` role itself. Revoking a tier from a Server Administrator leaves the user Unlicensed, and the role has to be restored by a server administrator in Tableau.
 
 ### License Grants
 
@@ -417,7 +417,7 @@ Tested against: `us-east-1.online.tableau.com` (Tableau Cloud)
 | viewer | OK | OK | |
 | unlicensed | OK | OK | |
 | site administrator | OK | OK | Legacy role (maps to SiteAdministratorExplorer) |
-| server administrator | Blocked | N/A | Read-only: server-level role, cannot be assigned via REST API |
+| server administrator | Blocked | N/A | Read-only: exists only on Tableau Server; this connector does not assign it |
 
 ### Group Membership
 
