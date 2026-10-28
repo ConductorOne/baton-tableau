@@ -3,7 +3,6 @@ package connector
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -75,10 +74,10 @@ func newSiteTestClient(t *testing.T, users *siteTestUsers) *client.Client {
 			}
 			if !ok {
 				w.WriteHeader(http.StatusNotFound)
-				_, _ = w.Write([]byte(`{"error":{"summary":"Resource Not Found","detail":"User '` + userID + `' does not exist.","code":"404017"}}`))
+				_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"summary": "Resource Not Found", "detail": "User '" + userID + "' does not exist.", "code": "404017"}})
 				return
 			}
-			_, _ = fmt.Fprintf(w, `{"user":{"id":%q,"name":"jdoe","siteRole":%q,"authSetting":"ServerDefault"}}`, userID, role)
+			_ = json.NewEncoder(w).Encode(map[string]any{"user": map[string]string{"id": userID, "name": "jdoe", "siteRole": role, "authSetting": "ServerDefault"}})
 		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, usersPathPrefix):
 			userID := strings.TrimPrefix(r.URL.Path, usersPathPrefix)
 			var body struct {
@@ -102,10 +101,10 @@ func newSiteTestClient(t *testing.T, users *siteTestUsers) *client.Client {
 			users.mu.Unlock()
 			if !ok {
 				w.WriteHeader(http.StatusNotFound)
-				_, _ = w.Write([]byte(`{"error":{"summary":"Resource Not Found","detail":"User '` + userID + `' does not exist.","code":"404017"}}`))
+				_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"summary": "Resource Not Found", "detail": "User '" + userID + "' does not exist.", "code": "404017"}})
 				return
 			}
-			_, _ = fmt.Fprintf(w, `{"user":{"name":"jdoe","siteRole":%q,"authSetting":"ServerDefault"}}`, body.User.SiteRole)
+			_ = json.NewEncoder(w).Encode(map[string]any{"user": map[string]string{"name": "jdoe", "siteRole": body.User.SiteRole, "authSetting": "ServerDefault"}})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"error":{"summary":"Not Found","detail":"unexpected request","code":"0x2"}}`))
