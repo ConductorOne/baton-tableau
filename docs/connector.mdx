@@ -37,6 +37,15 @@ Because a tier is a view of the user's single site role, several roles can satis
 
 A user who still holds the tier is set to Unlicensed on revoke, including the four admin roles above. A missing user, or one who no longer holds the tier, returns `GrantAlreadyRevoked` with no write; so does revoking Unlicensed from an Unlicensed user, and the next sync still shows that user as Unlicensed. Re-assign `SiteAdministrator*` roles through the Site Role entitlement. `ServerAdministrator` exists only on Tableau Server and this connector does not assign it, so a revoked Server Administrator stays Unlicensed until the role is restored in Tableau. Revoke also fails if the user belongs to a group with a "Grant role on sign in" minimum site role; remove them from that group first.
 
+## Site roles
+
+A user has a single site role, so granting a Site Role entitlement replaces the role the user currently holds. The connector reads the user's current role before every Grant or Revoke:
+
+- Granting the role the user already holds is a no-op, and C1 is told the grant already exists.
+- Granting a different role replaces the current one, and C1 is told which site-role grant was replaced.
+- Revoking a role the user no longer holds, or for a user that no longer exists, is a no-op and never overwrites the role the user holds now.
+- Revoking the role the user holds sets them to Unlicensed. Revoking Unlicensed from an Unlicensed user is the same no-op, because Unlicensed is the floor role and has nothing to remove; the next sync still shows the user as Unlicensed, because that is their current role.
+
 ## Permission inheritance
 
 Tableau uses a permission inheritance model that affects how access is synced and provisioned:

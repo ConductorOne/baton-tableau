@@ -12,6 +12,8 @@ import (
 	"github.com/conductorone/baton-tableau/pkg/client"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Valid Tableau REST API site roles.
@@ -135,22 +137,36 @@ func (s *siteBuilder) Grants(ctx context.Context, resource *v2.Resource, opts rs
 	return rv, &rs.SyncOpResults{NextPageToken: nextToken}, nil
 }
 
+// apiRoleForSlug maps a Site Role entitlement slug back to the Tableau API role name.
+func apiRoleForSlug(slug string) (string, bool) {
+	for key, value := range roles {
+		if value == slug {
+			return key, true
+		}
+	}
+	return "", false
+}
+
+// Grant sets the user's site role to the entitlement's role.
+//
+// A Tableau user has exactly one site role, so Grant reads the current role
+// (bypassing the response cache) before writing:
+//   - already holding the target role -> no write, GrantAlreadyExists.
+//   - otherwise -> write the role and, when the previous role is a known site
+//     role, report GrantReplaced naming the site-role grant the write displaced.
+//
+// Rate-limit annotations from the initial read are merged into every result.
 func (s *siteBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
+	log := ctxzap.Extract(ctx)
+
 	roleName, err := parseEntitlementSlug(entitlement.Id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse role from entitlement ID: %w", err)
 	}
 	principalID := principal.Id.Resource
 
-	var apiRoleName string
-	for key, value := range roles {
-		if value == roleName {
-			apiRoleName = key
-			break
-		}
-	}
-
-	if apiRoleName == "" {
+	apiRoleName, ok := apiRoleForSlug(roleName)
+	if !ok {
 		return nil, fmt.Errorf("unknown role: %s", roleName)
 	}
 
@@ -158,18 +174,80 @@ func (s *siteBuilder) Grant(ctx context.Context, principal *v2.Resource, entitle
 		return nil, fmt.Errorf("role %q is not assigned by this connector (it exists only on Tableau Server)", apiRoleName)
 	}
 
-	annos, err := s.client.UpdateUserSiteRole(ctx, principalID, apiRoleName)
+	user, getAnnos, err := s.client.GetUser(ctx, principalID)
+	if err != nil {
+		if client.IsNotFoundError(err) {
+			return getAnnos, status.Errorf(codes.NotFound, "site role: cannot grant %s: user %s not found", apiRoleName, principalID)
+		}
+		return getAnnos, fmt.Errorf("failed to read user %s for site role grant: %w", principalID, err)
+	}
+
+	if user.SiteRole == apiRoleName {
+		log.Debug("site role grant: user already holds role, no write needed",
+			zap.String("user_id", principalID), zap.String("site_role", user.SiteRole))
+		return mergeAnnotations(getAnnos, annotations.New(&v2.GrantAlreadyExists{})), nil
+	}
+
+	putAnnos, err := s.client.UpdateUserSiteRole(ctx, principalID, apiRoleName)
+	annos := mergeAnnotations(getAnnos, putAnnos)
 	if err != nil {
 		return annos, fmt.Errorf("failed to grant %s role to user %s: %w", roleName, principalID, err)
+	}
+
+	if oldSlug, known := roles[user.SiteRole]; known {
+		oldEntitlement := ent.NewPermissionEntitlement(entitlement.Resource, oldSlug)
+		annos.Append(&v2.GrantReplaced{ReplacedGrantId: grant.NewGrantID(principal.Id, oldEntitlement)})
 	}
 
 	return annos, nil
 }
 
-func (s *siteBuilder) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
-	principalID := grant.Principal.Id.Resource
+// Revoke resets the user to Unlicensed, but only when they still hold the
+// revoked role.
+//
+// Revoke reads the user's current role first: a 404, or a role other than the
+// one being revoked (e.g. a later Grant replaced it, see Grant's GrantReplaced
+// annotation), means there is nothing left to revoke, and writing Unlicensed
+// would wipe out access this revoke was never asked to touch. Revoking
+// Unlicensed from a user who is Unlicensed is the same no-op: it is the floor
+// role and has nothing to remove. Rate-limit annotations from the initial read
+// are merged into every result.
+func (s *siteBuilder) Revoke(ctx context.Context, g *v2.Grant) (annotations.Annotations, error) {
+	log := ctxzap.Extract(ctx)
+	principalID := g.Principal.Id.Resource
 
-	annos, err := s.client.UpdateUserSiteRole(ctx, principalID, unlicensed)
+	roleName, err := parseEntitlementSlug(g.Entitlement.Id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse role from entitlement ID: %w", err)
+	}
+	apiRoleName, ok := apiRoleForSlug(roleName)
+	if !ok {
+		return nil, fmt.Errorf("unknown role: %s", roleName)
+	}
+
+	user, getAnnos, err := s.client.GetUser(ctx, principalID)
+	if err != nil {
+		if client.IsNotFoundError(err) {
+			log.Debug("site role revoke: user not found, nothing to revoke", zap.String("user_id", principalID))
+			return mergeAnnotations(getAnnos, annotations.New(&v2.GrantAlreadyRevoked{})), nil
+		}
+		return getAnnos, fmt.Errorf("failed to read user %s for site role revoke: %w", principalID, err)
+	}
+
+	if user.SiteRole != apiRoleName {
+		log.Debug("site role revoke: user no longer holds role, nothing to revoke",
+			zap.String("user_id", principalID), zap.String("role", apiRoleName), zap.String("site_role", user.SiteRole))
+		return mergeAnnotations(getAnnos, annotations.New(&v2.GrantAlreadyRevoked{})), nil
+	}
+
+	if apiRoleName == unlicensed {
+		log.Debug("site role revoke: user already Unlicensed (floor role), nothing to remove",
+			zap.String("user_id", principalID))
+		return mergeAnnotations(getAnnos, annotations.New(&v2.GrantAlreadyRevoked{})), nil
+	}
+
+	putAnnos, err := s.client.UpdateUserSiteRole(ctx, principalID, unlicensed)
+	annos := mergeAnnotations(getAnnos, putAnnos)
 	if err != nil {
 		return annos, fmt.Errorf("failed to revoke site role from user %s: %w", principalID, err)
 	}

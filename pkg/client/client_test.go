@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
@@ -50,6 +51,38 @@ func TestGetUser_Found(t *testing.T) {
 	require.NotNil(t, user)
 	require.Equal(t, "user-1", user.ID)
 	require.Equal(t, "SiteAdministratorCreator", user.SiteRole)
+}
+
+// TestGetUser_BypassesResponseCache asserts that a second GetUser on the same
+// client sees a role changed on the server after the first read, instead of a
+// cached copy of it. Provisioning relies on this to read the role it acts on.
+func TestGetUser_BypassesResponseCache(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	body := `{"user":{"id":"user-1","siteRole":"Viewer"}}`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := newTestClient(t, srv)
+
+	user, _, err := c.GetUser(context.Background(), "user-1")
+	require.NoError(t, err)
+	require.Equal(t, "Viewer", user.SiteRole)
+
+	mu.Lock()
+	body = `{"user":{"id":"user-1","siteRole":"Creator"}}`
+	mu.Unlock()
+
+	user, _, err = c.GetUser(context.Background(), "user-1")
+	require.NoError(t, err)
+	require.Equal(t, "Creator", user.SiteRole, "GetUser returned a cached response")
 }
 
 func TestGetUser_NotFound(t *testing.T) {
