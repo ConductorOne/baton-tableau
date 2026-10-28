@@ -11,8 +11,10 @@ import (
 	"testing"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
+	"github.com/conductorone/baton-sdk/pkg/annotations"
 	ent "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
+	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-tableau/pkg/client"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -404,4 +406,189 @@ func TestSiteGrant_ReplaceUnknownPriorRole(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []recordedPut{{userID: "user-1", siteRole: viewer}}, users.recordedPuts())
 	require.False(t, annos.Contains(&v2.GrantReplaced{}))
+}
+
+// TestSiteGrant_ExactRoleNoHierarchy asserts that Grant compares roles exactly:
+// a role that "includes" the requested one (SiteAdministratorCreator vs Creator)
+// is still replaced, and the same exact role (including Unlicensed) is a no-op.
+func TestSiteGrant_ExactRoleNoHierarchy(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name, held, target string
+		wantPut            bool
+	}{
+		{"viewer to creator", viewer, creator, true},
+		{"creator to viewer", creator, viewer, true},
+		{"site admin creator to creator", siteAdministratorCreator, creator, true},
+		{"site admin to viewer", siteAdministrator, viewer, true},
+		{"site admin explorer to unlicensed", siteAdministratorExplorer, unlicensed, true},
+		{"unlicensed to unlicensed", unlicensed, unlicensed, false},
+		{"site admin creator to site admin creator", siteAdministratorCreator, siteAdministratorCreator, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			users := newSiteTestUsers(map[string]string{"user-1": tc.held})
+			s := newSiteBuilder(newSiteTestClient(t, users))
+
+			annos, err := s.Grant(context.Background(), testUserPrincipal("user-1"), testSiteEntitlement(tc.target))
+			require.NoError(t, err)
+			if !tc.wantPut {
+				require.Empty(t, users.recordedPuts())
+				require.True(t, annos.Contains(&v2.GrantAlreadyExists{}))
+				require.False(t, annos.Contains(&v2.GrantReplaced{}))
+				return
+			}
+			require.Equal(t, []recordedPut{{userID: "user-1", siteRole: tc.target}}, users.recordedPuts())
+			require.False(t, annos.Contains(&v2.GrantAlreadyExists{}))
+			replaced := &v2.GrantReplaced{}
+			ok, err := annos.Pick(replaced)
+			require.NoError(t, err)
+			require.True(t, ok)
+			require.Equal(t, testSiteGrantID("user-1", tc.held), replaced.GetReplacedGrantId())
+		})
+	}
+}
+
+// TestSiteGrant_ServerAdministratorProtected asserts that a site Grant never
+// downgrades a ServerAdministrator, and that the refusal is never reported as
+// GrantAlreadyExists.
+func TestSiteGrant_ServerAdministratorProtected(t *testing.T) {
+	t.Parallel()
+
+	for _, target := range []string{viewer, creator, unlicensed, siteAdministratorCreator} {
+		t.Run(target, func(t *testing.T) {
+			t.Parallel()
+
+			users := newSiteTestUsers(map[string]string{"user-1": serverAdministrator})
+			s := newSiteBuilder(newSiteTestClient(t, users))
+
+			annos, err := s.Grant(context.Background(), testUserPrincipal("user-1"), testSiteEntitlement(target))
+			require.Error(t, err)
+			require.Equal(t, codes.FailedPrecondition, status.Code(err))
+			require.Empty(t, users.recordedPuts(), "a ServerAdministrator must not be written")
+			require.False(t, annos.Contains(&v2.GrantAlreadyExists{}))
+			require.Equal(t, serverAdministrator, users.roles["user-1"])
+		})
+	}
+}
+
+// TestSiteRevoke_AdminRoles asserts that a held SiteAdministrator* role is reset
+// to Unlicensed, a held ServerAdministrator is refused without a write, and a
+// stale revoke of an admin role is a no-op.
+func TestSiteRevoke_AdminRoles(t *testing.T) {
+	t.Parallel()
+
+	for _, held := range []string{siteAdministrator, siteAdministratorCreator, siteAdministratorExplorer} {
+		t.Run("held "+held, func(t *testing.T) {
+			t.Parallel()
+
+			users := newSiteTestUsers(map[string]string{"user-1": held})
+			s := newSiteBuilder(newSiteTestClient(t, users))
+
+			annos, err := s.Revoke(context.Background(), testSiteGrant(held, "user-1"))
+			require.NoError(t, err)
+			require.Equal(t, []recordedPut{{userID: "user-1", siteRole: unlicensed}}, users.recordedPuts())
+			require.False(t, annos.Contains(&v2.GrantAlreadyRevoked{}))
+		})
+	}
+
+	t.Run("held ServerAdministrator is protected", func(t *testing.T) {
+		t.Parallel()
+
+		users := newSiteTestUsers(map[string]string{"user-1": serverAdministrator})
+		s := newSiteBuilder(newSiteTestClient(t, users))
+
+		annos, err := s.Revoke(context.Background(), testSiteGrant(serverAdministrator, "user-1"))
+		require.Error(t, err)
+		require.Equal(t, codes.FailedPrecondition, status.Code(err))
+		require.Empty(t, users.recordedPuts())
+		require.False(t, annos.Contains(&v2.GrantAlreadyRevoked{}))
+		require.Equal(t, serverAdministrator, users.roles["user-1"])
+	})
+
+	t.Run("stale revoke of a role while ServerAdministrator", func(t *testing.T) {
+		t.Parallel()
+
+		users := newSiteTestUsers(map[string]string{"user-1": serverAdministrator})
+		s := newSiteBuilder(newSiteTestClient(t, users))
+
+		annos, err := s.Revoke(context.Background(), testSiteGrant(creator, "user-1"))
+		require.NoError(t, err)
+		require.Empty(t, users.recordedPuts())
+		require.True(t, annos.Contains(&v2.GrantAlreadyRevoked{}))
+	})
+
+	t.Run("stale revoke of an admin role", func(t *testing.T) {
+		t.Parallel()
+
+		users := newSiteTestUsers(map[string]string{"user-1": viewer})
+		s := newSiteBuilder(newSiteTestClient(t, users))
+
+		annos, err := s.Revoke(context.Background(), testSiteGrant(siteAdministrator, "user-1"))
+		require.NoError(t, err)
+		require.Empty(t, users.recordedPuts())
+		require.True(t, annos.Contains(&v2.GrantAlreadyRevoked{}))
+	})
+}
+
+// TestSite_ServerAdministratorChangedBetweenCalls asserts the guard reads fresh
+// state: a user promoted to ServerAdministrator out-of-band between two calls on
+// one client is protected on the second call.
+func TestSite_ServerAdministratorChangedBetweenCalls(t *testing.T) {
+	t.Parallel()
+
+	users := newSiteTestUsers(map[string]string{"user-1": viewer})
+	s := newSiteBuilder(newSiteTestClient(t, users))
+	ctx := context.Background()
+
+	_, err := s.Grant(ctx, testUserPrincipal("user-1"), testSiteEntitlement(viewer))
+	require.NoError(t, err)
+
+	users.set("user-1", serverAdministrator)
+
+	_, err = s.Grant(ctx, testUserPrincipal("user-1"), testSiteEntitlement(creator))
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
+	require.Empty(t, users.recordedPuts())
+}
+
+// TestSiteEntitlements_ExclusionGroup asserts every Site Role entitlement carries
+// an exclusion group scoped to its site: one group within a site, distinct groups
+// across sites, with entitlement and grant IDs unchanged.
+func TestSiteEntitlements_ExclusionGroup(t *testing.T) {
+	t.Parallel()
+
+	s := newSiteBuilder(nil)
+	siteB := &v2.Resource{
+		Id:          &v2.ResourceId{ResourceType: resourceTypeSite.Id, Resource: "site-2"},
+		DisplayName: "Site 2",
+	}
+	groupOf := func(e *v2.Entitlement) string {
+		eg := &v2.EntitlementExclusionGroup{}
+		annos := annotations.Annotations(e.GetAnnotations())
+		ok, err := annos.Pick(eg)
+		require.NoError(t, err)
+		require.True(t, ok, "entitlement %s has no exclusion group", e.GetId())
+		return eg.GetExclusionGroupId()
+	}
+
+	entsA, _, err := s.Entitlements(context.Background(), testSiteResource(), rs.SyncOpAttrs{})
+	require.NoError(t, err)
+	entsB, _, err := s.Entitlements(context.Background(), siteB, rs.SyncOpAttrs{})
+	require.NoError(t, err)
+	require.Len(t, entsA, len(roles))
+	require.Len(t, entsB, len(roles))
+
+	groupA, groupB := groupOf(entsA[0]), groupOf(entsB[0])
+	require.NotEqual(t, groupA, groupB, "different sites must not exclude one another")
+	for _, e := range entsA {
+		require.Equal(t, groupA, groupOf(e), "roles of one site share a group")
+		slug := e.GetSlug()
+		require.Equal(t, ent.NewEntitlementID(testSiteResource(), slug), e.GetId(), "entitlement ID must be unchanged")
+	}
+	for _, e := range entsB {
+		require.Equal(t, groupB, groupOf(e))
+	}
 }
