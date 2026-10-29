@@ -138,16 +138,14 @@ func (s *siteBuilder) Grants(ctx context.Context, resource *v2.Resource, opts rs
 	return rv, &rs.SyncOpResults{NextPageToken: nextToken}, nil
 }
 
-// siteRoleExclusionGroup returns the exclusion group shared by the Site Role
-// entitlements of one site. A user holds exactly one site role per site, so the
-// roles of a site exclude each other; the site ID keeps different sites apart.
+// siteRoleExclusionGroup is shared by one site's Site Role entitlements: a user
+// holds one role per site, and the site ID keeps different sites apart.
 func siteRoleExclusionGroup(site *v2.Resource) string {
 	return "site-role:" + site.Id.Resource
 }
 
-// errServerAdminProtected refuses a write that would change a ServerAdministrator.
-// ServerAdministrator is a server-wide role that this connector cannot assign, so
-// a site-level write that removed it could not be undone by the connector.
+// errServerAdminProtected refuses a write that would change a ServerAdministrator:
+// a server-wide role this connector cannot assign, so it could not undo the write.
 func errServerAdminProtected(action, userID string) error {
 	return status.Errorf(codes.FailedPrecondition,
 		"site role: cannot %s for user %s: they hold %s, a server-wide role this connector cannot assign back; change it in Tableau Server",
@@ -164,18 +162,16 @@ func apiRoleForSlug(slug string) (string, bool) {
 	return "", false
 }
 
-// Grant sets the user's site role to the entitlement's role.
+// Grant sets the user's site role to the entitlement's role. It reads the current
+// role without the cache first, then:
+//   - already the target role: no write, GrantAlreadyExists.
+//   - ServerAdministrator: no write, FailedPrecondition (errServerAdminProtected).
+//     Any other role, including SiteAdministrator*, is replaced: the caller asked
+//     for exactly this role.
+//   - otherwise: write, and report GrantReplaced for the displaced site-role grant
+//     when the previous role is a known site role.
 //
-// A Tableau user has exactly one site role, so Grant reads the current role
-// (bypassing the response cache) before writing:
-//   - already holding the target role -> no write, GrantAlreadyExists.
-//   - holding ServerAdministrator -> no write, FailedPrecondition (see
-//     errServerAdminProtected). Any other role, including SiteAdministrator*,
-//     is replaced because the caller asked for exactly this role.
-//   - otherwise -> write the role and, when the previous role is a known site
-//     role, report GrantReplaced naming the site-role grant the write displaced.
-//
-// Rate-limit annotations from the initial read are merged into every result.
+// Rate-limit annotations from the read are merged into every result.
 func (s *siteBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
 	log := ctxzap.Extract(ctx)
 
@@ -228,18 +224,13 @@ func (s *siteBuilder) Grant(ctx context.Context, principal *v2.Resource, entitle
 	return annos, nil
 }
 
-// Revoke resets the user to Unlicensed, but only when they still hold the
-// revoked role.
-//
-// Revoke reads the user's current role first: a 404, or a role other than the
-// one being revoked (e.g. a later Grant replaced it, see Grant's GrantReplaced
-// annotation), means there is nothing left to revoke, and writing Unlicensed
-// would wipe out access this revoke was never asked to touch. Revoking
-// Unlicensed from a user who is Unlicensed is the same no-op: it is the floor
-// role and has nothing to remove. A held ServerAdministrator is never reset
-// (FailedPrecondition, no write). Held SiteAdministrator* roles are reset to
-// Unlicensed. Rate-limit annotations from the initial read
-// are merged into every result.
+// Revoke resets the user to Unlicensed, but only while they still hold the
+// revoked role. After a fresh read, a missing user or a different role (e.g. a
+// later Grant replaced it) is GrantAlreadyRevoked: writing Unlicensed would wipe
+// access this revoke never targeted. Revoking Unlicensed from an Unlicensed user
+// is the same no-op (the floor role). A held ServerAdministrator is refused with
+// FailedPrecondition and no write; held SiteAdministrator* roles are reset.
+// Rate-limit annotations from the read are merged into every result.
 func (s *siteBuilder) Revoke(ctx context.Context, g *v2.Grant) (annotations.Annotations, error) {
 	log := ctxzap.Extract(ctx)
 	principalID := g.Principal.Id.Resource

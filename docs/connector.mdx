@@ -39,13 +39,13 @@ A user who still holds the tier is set to Unlicensed on revoke, including the fo
 
 ## Site roles
 
-A user has a single site role per site, so the Site Role entitlements of a site are mutually exclusive in C1 (the exclusion group is scoped to the site, so different sites do not affect one another). Roles are compared exactly; there is no role hierarchy. The connector reads the user's current role before every Grant or Revoke:
+A user has a single site role per site, so a site's Site Role entitlements are mutually exclusive in C1 (the exclusion group is scoped to the site; other sites are unaffected). Roles are compared exactly, with no hierarchy. The connector reads the user's current role before every Grant or Revoke:
 
-- Granting the role the user already holds, including Unlicensed, is a no-op, and C1 is told the grant already exists.
-- Granting a different role sets exactly that role and, after the write succeeds, tells C1 which site-role grant was replaced. This includes replacing `SiteAdministrator`, `SiteAdministratorCreator`, or `SiteAdministratorExplorer`; granting a Site Role entitlement is the explicit way to change those roles.
-- Revoking a role the user no longer holds, or for a user that no longer exists, is a no-op and never overwrites the role the user holds now.
-- Revoking the role the user holds sets them to Unlicensed, including a held `SiteAdministrator*` role. Revoking Unlicensed from an Unlicensed user is the same no-op, because Unlicensed is the floor role and has nothing to remove; the next sync still shows the user as Unlicensed, because that is their current role.
-- `ServerAdministrator` is protected. It is a Tableau Server role that this connector cannot assign, so granting another site role to a Server Administrator, or revoking their held `ServerAdministrator` role, fails with `FailedPrecondition` and writes nothing. Change that role in Tableau Server.
+- Granting the role the user already holds, including Unlicensed, is a no-op; C1 is told the grant already exists.
+- Granting a different role sets exactly that role and, once the write succeeds, tells C1 which site-role grant was replaced. This includes replacing `SiteAdministrator`, `SiteAdministratorCreator`, or `SiteAdministratorExplorer`: a Site Role grant is the explicit way to change those roles.
+- Revoking a role the user no longer holds, or for a missing user, is a no-op and never overwrites their current role.
+- Revoking the role the user holds sets them to Unlicensed, including a held `SiteAdministrator*`. Revoking Unlicensed from an Unlicensed user is the same no-op (the floor role), and the next sync still shows them as Unlicensed.
+- `ServerAdministrator` is protected. This Tableau Server role is sync-only; the connector cannot assign it, so granting another site role to a Server Administrator, or revoking their held `ServerAdministrator`, fails with `FailedPrecondition` and writes nothing. Change that role in Tableau Server.
 
 ## Permission inheritance
 
