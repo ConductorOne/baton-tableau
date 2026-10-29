@@ -33,6 +33,10 @@ In Tableau, licensing is role-based: each user's **site role** determines their 
 When your Tableau site has per-tier seat capacities configured, C1 tracks the purchased and consumed seat counts for each license tier, so you can review license utilization alongside who holds each tier.
 </Note>
 
+Because a tier is a view of the user's single site role, several roles can satisfy one tier (for example, `SiteAdministratorCreator` satisfies Creator), and the four tiers form one exclusion group (`tableau-license`) with no default tier or ranking. Granting a tier the user already holds is a no-op that keeps their role and returns `GrantAlreadyExists`. Granting a *different* tier to a user holding `SiteAdministrator`, `SiteAdministratorCreator`, `SiteAdministratorExplorer`, or `ServerAdministrator` fails with `FailedPrecondition`: change those roles through the Site Role entitlement (it assigns `SiteAdministrator*`; this connector does not assign `ServerAdministrator`). Any other user is set to the tier's base role, with `GrantReplaced` only when the previous role belonged to a recognized tier. A missing user returns `NotFound`.
+
+A user who still holds the tier is set to Unlicensed on revoke, including the four admin roles above. A missing user, or one who no longer holds the tier, returns `GrantAlreadyRevoked` with no write; so does revoking Unlicensed from an Unlicensed user, and the next sync still shows that user as Unlicensed. Re-assign `SiteAdministrator*` roles through the Site Role entitlement. `ServerAdministrator` exists only on Tableau Server and this connector does not assign it, so a revoked Server Administrator stays Unlicensed until the role is restored in Tableau. Revoke also fails if the user belongs to a group with a "Grant role on sign in" minimum site role; remove them from that group first.
+
 ## Permission inheritance
 
 Tableau uses a permission inheritance model that affects how access is synced and provisioned:
