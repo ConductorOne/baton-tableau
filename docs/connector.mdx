@@ -37,6 +37,16 @@ Because a tier is a view of the user's single site role, several roles can satis
 
 A user who still holds the tier is set to Unlicensed on revoke, including the four admin roles above. A missing user, or one who no longer holds the tier, returns `GrantAlreadyRevoked` with no write; so does revoking Unlicensed from an Unlicensed user, and the next sync still shows that user as Unlicensed. Re-assign `SiteAdministrator*` roles through the Site Role entitlement. `ServerAdministrator` exists only on Tableau Server and this connector does not assign it, so a revoked Server Administrator stays Unlicensed until the role is restored in Tableau. Revoke also fails if the user belongs to a group with a "Grant role on sign in" minimum site role; remove them from that group first.
 
+## Site roles
+
+A user has a single site role per site, so a site's Site Role entitlements are mutually exclusive in C1 (the exclusion group is scoped to the site; other sites are unaffected). Roles are compared exactly, with no hierarchy. The connector reads the user's current role before every Grant or Revoke:
+
+- Granting the role the user already holds, including Unlicensed, is a no-op; C1 is told the grant already exists.
+- Granting a different role sets exactly that role and, once the write succeeds, tells C1 which site-role grant was replaced. This includes replacing `SiteAdministrator`, `SiteAdministratorCreator`, or `SiteAdministratorExplorer`: a Site Role grant is the explicit way to change those roles.
+- Revoking a role the user no longer holds, or for a missing user, is a no-op and never overwrites their current role.
+- Revoking the role the user holds sets them to Unlicensed, including a held `SiteAdministrator*`. Revoking Unlicensed from an Unlicensed user is the same no-op (the floor role), and the next sync still shows them as Unlicensed.
+- `ServerAdministrator` is protected. This Tableau Server role is sync-only; the connector cannot assign it, so granting another site role to a Server Administrator, or revoking their held `ServerAdministrator`, fails with `FailedPrecondition` and writes nothing. Change that role in Tableau Server.
+
 ## Permission inheritance
 
 Tableau uses a permission inheritance model that affects how access is synced and provisioned:
