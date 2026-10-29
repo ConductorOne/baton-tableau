@@ -21,6 +21,12 @@ import (
 
 var licenses = []string{creator, explorer, viewer, unlicensed}
 
+// licenseExclusionGroup marks the four tier entitlements as mutually exclusive:
+// a user's single site role puts them in exactly one tier. It is deliberately
+// unscoped, so the SDK shares one group across the tier resources, and sets no
+// default or order, so C1 gets no fallback tier or privilege ranking.
+const licenseExclusionGroup = "tableau-license"
+
 var licensesMap = map[string]string{
 	"creator":    creator,
 	"explorer":   explorer,
@@ -211,6 +217,7 @@ func (l *licenseBuilder) StaticEntitlements(_ context.Context, _ rs.SyncOpAttrs)
 		ent.WithGrantableTo(resourceTypeUser),
 		ent.WithDisplayName("License member"),
 		ent.WithDescription("Member of License in Tableau"),
+		ent.WithExclusionGroup(licenseExclusionGroup),
 	)
 
 	return []*v2.Entitlement{en}, nil, nil
@@ -258,11 +265,10 @@ func (l *licenseBuilder) Grants(ctx context.Context, resource *v2.Resource, opts
 	return rv, &rs.SyncOpResults{NextPageToken: nextToken}, nil
 }
 
-// Grant sets the user's site role to the tier's base role. It reads the user
-// first: a missing user returns NotFound, a role already in the tier returns
-// GrantAlreadyExists without writing, an admin role fails with
-// FailedPrecondition, and otherwise it writes, reporting GrantReplaced when the
-// previous role belonged to a known tier.
+// Grant sets the user's site role to the tier's base role after a fresh read:
+// NotFound for a missing user, GrantAlreadyExists (no write) for a role already
+// in the tier, FailedPrecondition for an admin role, else a write that reports
+// GrantReplaced when the previous role belonged to a known tier.
 func (l *licenseBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
 	log := ctxzap.Extract(ctx)
 
@@ -311,9 +317,9 @@ func (l *licenseBuilder) Grant(ctx context.Context, principal *v2.Resource, enti
 	return annos, nil
 }
 
-// Revoke sets the user's site role to Unlicensed. It reads the user first and
-// returns GrantAlreadyRevoked without writing when the user is missing, no
-// longer in the tier, or already Unlicensed.
+// Revoke sets the user's site role to Unlicensed after a fresh read, returning
+// GrantAlreadyRevoked without writing when the user is missing, no longer in the
+// tier, or already Unlicensed.
 func (l *licenseBuilder) Revoke(ctx context.Context, g *v2.Grant) (annotations.Annotations, error) {
 	log := ctxzap.Extract(ctx)
 	principalID := g.Principal.Id.Resource

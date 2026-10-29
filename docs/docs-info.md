@@ -187,7 +187,7 @@
   - `Viewer` — View and interact with published dashboards
   - `Unlicensed` — No access to Tableau site features
 - **Entitlements**:
-  - `member` — License is assigned to user (static entitlement)
+  - `member` — License is assigned to user (static entitlement); all four tiers share exclusion group `tableau-license` (unscoped, no default or order)
 - **Seat counts** (License Profile trait):
   - **Purchased** — read from the site's per-tier capacity fields (`tierCreatorCapacity`, `tierExplorerCapacity`, `tierViewerCapacity`), which the Tableau API returns as JSON strings. Attached only when the value is a positive number; a `0` or absent capacity attaches no seats (avoids rendering "0 of 0"). The `Unlicensed` floor tier is never capped.
   - **Consumed** — counted server-side per tier via the users `siteRole` filter, reading `pagination.totalAvailable` (one request per tier instead of walking every user page).

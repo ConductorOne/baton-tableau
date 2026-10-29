@@ -134,9 +134,8 @@ const (
 	licenseTestRateRemaining = 42
 )
 
-// licenseTestUsersMu guards the users maps handed to newLicenseTestClient: the
-// mock server reads and applies PUTs to them from its own goroutine while a
-// test may change a role between calls.
+// licenseTestUsersMu guards the users maps handed to newLicenseTestClient, which
+// the mock server's goroutine reads and writes while a test may change a role.
 var licenseTestUsersMu sync.Mutex
 
 type recordedPut struct {
@@ -144,13 +143,10 @@ type recordedPut struct {
 	siteRole string
 }
 
-// newLicenseTestClient starts a mock Tableau API server that authenticates
-// any login, serves GetUser from users (keyed by user ID, valued by current
-// site role, updated by every PUT; a missing key means a 404 and the licenseTestServerError role
-// means a 500), stamps rate-limit headers on every GET and PUT so tests can check the
-// annotations are propagated, and records every PUT
-// (UpdateUserSiteRole) it receives so tests can assert exact write counts
-// and bodies.
+// newLicenseTestClient starts a mock Tableau API that accepts any login and
+// serves GetUser from users (user ID -> site role, updated by each PUT; a
+// missing key is a 404, licenseTestServerError a 500). Every GET and PUT carries
+// rate-limit headers, and every PUT is recorded in puts.
 func newLicenseTestClient(t *testing.T, users map[string]string, puts *[]recordedPut) *client.Client {
 	t.Helper()
 
@@ -267,6 +263,7 @@ func TestLicenseGrant_AlreadyInTier(t *testing.T) {
 			require.NoError(t, err)
 			require.Empty(t, puts, "already-in-tier grant must not write")
 			require.True(t, annos.Contains(&v2.GrantAlreadyExists{}))
+			require.False(t, annos.Contains(&v2.GrantReplaced{}), "same-tier no-op replaces nothing")
 		})
 	}
 }
@@ -319,9 +316,10 @@ func TestLicenseGrant_CrossTierAdmin(t *testing.T) {
 				target = creator
 			}
 
-			_, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(target))
+			annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(target))
 			require.Error(t, err)
 			require.Equal(t, codes.FailedPrecondition, status.Code(err))
+			require.False(t, annos.Contains(&v2.GrantReplaced{}))
 			require.Empty(t, puts, "refused admin cross-tier grant must not write")
 		})
 	}
@@ -437,9 +435,10 @@ func TestLicense_GetUserServerError(t *testing.T) {
 		c := newLicenseTestClient(t, map[string]string{"user-1": licenseTestServerError}, &puts)
 		l := newLicenseBuilder(c)
 
-		_, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
+		annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
 		require.Error(t, err)
 		require.NotEqual(t, codes.NotFound, status.Code(err))
+		require.False(t, annos.Contains(&v2.GrantReplaced{}))
 		require.Empty(t, puts, "failed read must not write")
 	})
 
@@ -673,4 +672,33 @@ func TestLicenseGrant_RoleChangedBetweenGrants(t *testing.T) {
 	require.False(t, annos.Contains(&v2.GrantAlreadyExists{}), "grant must see the externally changed role")
 	require.Len(t, puts, 1)
 	require.Equal(t, creator, puts[0].siteRole)
+}
+
+// TestLicenseGrant_FailedWriteNoReplacement asserts that a cross-tier grant
+// whose write fails reports no GrantReplaced, since nothing was replaced.
+func TestLicenseGrant_FailedWriteNoReplacement(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/auth/signin":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"credentials": map[string]any{"site": map[string]any{"id": licenseTestSiteID}, "user": map[string]any{"id": "me"}, "token": "t"},
+			})
+		case r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"user": map[string]any{"id": "user-1", "siteRole": viewer}})
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"summary":"Bad Request","detail":"rejected","code":"0x4"}}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := client.New(context.Background(), "unused", licenseTestSiteID, "token-name", "token-secret", "3.19", srv.URL)
+	require.NoError(t, err)
+
+	annos, err := newLicenseBuilder(c).Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
+	require.ErrorContains(t, err, "failed to grant Creator license")
+	require.False(t, annos.Contains(&v2.GrantReplaced{}))
 }
