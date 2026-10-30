@@ -101,6 +101,12 @@ func WithFilter(filter string) ReqOpt {
 	}
 }
 
+// IsFilterSafe reports whether value can be used in a filter expression. Tableau rejects
+// "," and "&" even when encoded.
+func IsFilterSafe(value string) bool {
+	return value != "" && !strings.ContainsAny(value, ",&")
+}
+
 // applyOpts applies all ReqOpts to a URL.
 func applyOpts(u *url.URL, opts ...ReqOpt) {
 	for _, opt := range opts {

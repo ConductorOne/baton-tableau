@@ -72,6 +72,7 @@ baton resources
 - **Grant expansion**: Group-based permissions on projects, workbooks, and views are supported. When a group has a permission, all members inherit it.
 - **"All Users" group**: Tableau automatically adds every user to the built-in "All Users" group. This group cannot be modified via the API — Grant and Revoke operations on it are not supported. The connector syncs its membership to show each user's base site role.
 - **License revoke constraints**: Revoking a license (setting a user to "Unlicensed") will fail if the user belongs to a group with a "Grant role on sign in" minimum site role. Remove the user from the constraining group first, then revoke the license.
+- **Locked project names**: Inherited workbook grants for locked projects are found by filtering workbooks on the project name, and Tableau rejects filters containing commas (`,`) or ampersands (`&`). Locked projects whose names contain these characters are skipped for inherited workbook grants and a warning is logged. Rename those projects to sync their inherited access.
 - **Idempotency**: Granting a permission that already exists returns success (not an error). Revoking a permission that is already removed also returns success.
 
 # Credentials Setup
