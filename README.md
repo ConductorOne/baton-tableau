@@ -46,8 +46,8 @@ baton resources
 - **Users** — All users on the site with email, site role, auth setting, and last login
 - **Groups** — Tableau groups with membership information
 - **Licenses** — License tiers (Creator, Explorer, Viewer, Unlicensed) with role-based assignment and purchased/consumed seat counts
-- **Projects** — Tableau projects with Read/Write permission assignments for users and groups
-- **Workbooks** — Tableau workbooks with 15 granular permission assignments for users and groups
+- **Projects** — Tableau projects with `View` and `Publish` permission assignments, plus the 16 `Workbook / ...` permissions that apply to the workbooks inside the project, for users and groups
+- **Workbooks** — Tableau workbooks with 16 granular permission assignments for users and groups
 - **Views** — Individual dashboards/views with granular permissions (inherited from workbook when `showTabs=true`)
 
 `baton-tableau` supports the following provisioning operations:
@@ -59,8 +59,8 @@ baton resources
 | Site Roles | Grant/Revoke | Assign/remove site-wide roles (Creator, Explorer, SiteAdministratorCreator, etc.) |
 | Licenses | Grant/Revoke | Assign/remove license tiers by updating site role |
 | Groups | Grant/Revoke | Add/remove users from groups |
-| Projects | Grant/Revoke | Assign/remove Read, Write permissions for users and groups |
-| Workbooks | Grant/Revoke | Assign/remove 15 granular permissions for users and groups |
+| Projects | Grant/Revoke | Assign/remove the `View` and `Publish` project permissions, plus the 16 `Workbook / ...` default workbook permissions, for users and groups |
+| Workbooks | Grant/Revoke | Assign/remove 16 granular permissions for users and groups |
 | Views | Grant/Revoke | Assign/remove view permissions for users and groups (when `showTabs=false`) |
 
 ## Important Notes
@@ -69,7 +69,7 @@ baton resources
 - **showTabs**: When a workbook has `showTabs=true`, view-level permissions are inherited from the workbook and cannot be modified independently. Grant/Revoke on those views are blocked with a descriptive error.
 - **Views in Personal Space**: Workbooks in a user's Personal Space (not under any project) are not synced, and therefore their views are not synced either.
 - **Server Administrators**: Users with `ServerAdministrator` site role are skipped during group membership sync (server-level admins are not site-scoped).
-- **Grant expansion**: Group-based permissions on projects, workbooks, and views are supported. When a group has a permission, all members inherit it.
+- **Grant expansion**: Group-based permissions on projects, workbooks, and views are supported. When a group has a permission, all members inherit it. Revoking such a permission from a single member does not remove their access: Tableau has no user-level assignment to remove, so the revoke returns `GrantAlreadyRevoked` and the next sync derives the permission from the group again. Revoke from the group, or remove the user from the group.
 - **"All Users" group**: Tableau automatically adds every user to the built-in "All Users" group. This group cannot be modified via the API — Grant and Revoke operations on it are not supported. The connector syncs its membership to show each user's base site role.
 - **License revoke constraints**: Revoking a license (setting a user to "Unlicensed") will fail if the user belongs to a group with a "Grant role on sign in" minimum site role. Remove the user from the constraining group first, then revoke the license.
 - **Locked project names**: Inherited workbook grants for locked projects are found by filtering workbooks on the project name, and Tableau rejects filters containing commas (`,`) or ampersands (`&`). Locked projects whose names contain these characters are skipped for inherited workbook grants and a warning is logged. Rename those projects to sync their inherited access.
