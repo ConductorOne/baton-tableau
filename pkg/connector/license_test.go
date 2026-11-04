@@ -814,3 +814,61 @@ func TestLicenseSync_TierEntitlementsShareExclusionGroup(t *testing.T) {
 		require.Zero(t, group.GetOrder(), "no privilege order is authorized")
 	}
 }
+
+// TestLicense_SelfLockoutGuard asserts that a license Grant or Revoke that would
+// write a new role for the signed-in user is refused with FailedPrecondition and
+// no write, while no-op outcomes stay no-ops.
+func TestLicense_SelfLockoutGuard(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	revokeGrant := func(tier string) *v2.Grant {
+		return &v2.Grant{Entitlement: testLicenseEntitlement(tier), Principal: testUserPrincipal(testSelfUserID)}
+	}
+
+	t.Run("grant is refused", func(t *testing.T) {
+		t.Parallel()
+
+		var puts []recordedPut
+		l := newLicenseBuilder(newLicenseTestClient(t, map[string]string{testSelfUserID: viewer}, &puts))
+
+		_, err := l.Grant(ctx, testUserPrincipal(testSelfUserID), testLicenseEntitlement(creator))
+		require.Equal(t, codes.FailedPrecondition, status.Code(err))
+		require.Empty(t, puts)
+	})
+
+	t.Run("grant of the held tier stays a no-op", func(t *testing.T) {
+		t.Parallel()
+
+		var puts []recordedPut
+		l := newLicenseBuilder(newLicenseTestClient(t, map[string]string{testSelfUserID: viewer}, &puts))
+
+		annos, err := l.Grant(ctx, testUserPrincipal(testSelfUserID), testLicenseEntitlement(viewer))
+		require.NoError(t, err)
+		require.True(t, annos.Contains(&v2.GrantAlreadyExists{}))
+		require.Empty(t, puts)
+	})
+
+	t.Run("revoke is refused", func(t *testing.T) {
+		t.Parallel()
+
+		var puts []recordedPut
+		l := newLicenseBuilder(newLicenseTestClient(t, map[string]string{testSelfUserID: viewer}, &puts))
+
+		_, err := l.Revoke(ctx, revokeGrant(viewer))
+		require.Equal(t, codes.FailedPrecondition, status.Code(err))
+		require.Empty(t, puts)
+	})
+
+	t.Run("revoke of a tier not held stays a no-op", func(t *testing.T) {
+		t.Parallel()
+
+		var puts []recordedPut
+		l := newLicenseBuilder(newLicenseTestClient(t, map[string]string{testSelfUserID: viewer}, &puts))
+
+		annos, err := l.Revoke(ctx, revokeGrant(creator))
+		require.NoError(t, err)
+		require.True(t, annos.Contains(&v2.GrantAlreadyRevoked{}))
+		require.Empty(t, puts)
+	})
+}

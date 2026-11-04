@@ -22,6 +22,10 @@ import (
 
 const siteTestSiteID = "site-1"
 
+// testSelfUserID is the user ID the mock login returns, i.e. the account the
+// connector signs in as.
+const testSelfUserID = "me"
+
 // siteTestUsers is the mock Tableau user store behind newSiteTestClient. Tests
 // change a role out-of-band through set, the way an admin editing the user in
 // the Tableau UI would.
@@ -474,13 +478,13 @@ func TestSiteGrant_ServerAdministratorProtected(t *testing.T) {
 	}
 }
 
-// TestSiteRevoke_AdminRoles asserts that a held SiteAdministrator* role is reset
-// to Unlicensed, a held ServerAdministrator is refused without a write, and a
-// stale revoke of an admin role is a no-op.
+// TestSiteRevoke_AdminRoles asserts that any held administrator role, including
+// ServerAdministrator, is reset to Unlicensed, and that a stale revoke of an
+// admin role is a no-op.
 func TestSiteRevoke_AdminRoles(t *testing.T) {
 	t.Parallel()
 
-	for _, held := range []string{siteAdministrator, siteAdministratorCreator, siteAdministratorExplorer} {
+	for _, held := range []string{siteAdministrator, siteAdministratorCreator, siteAdministratorExplorer, serverAdministrator} {
 		t.Run("held "+held, func(t *testing.T) {
 			t.Parallel()
 
@@ -493,20 +497,6 @@ func TestSiteRevoke_AdminRoles(t *testing.T) {
 			require.False(t, annos.Contains(&v2.GrantAlreadyRevoked{}))
 		})
 	}
-
-	t.Run("held ServerAdministrator is protected", func(t *testing.T) {
-		t.Parallel()
-
-		users := newSiteTestUsers(map[string]string{"user-1": serverAdministrator})
-		s := newSiteBuilder(newSiteTestClient(t, users))
-
-		annos, err := s.Revoke(context.Background(), testSiteGrant(serverAdministrator, "user-1"))
-		require.Error(t, err)
-		require.Equal(t, codes.FailedPrecondition, status.Code(err))
-		require.Empty(t, users.recordedPuts())
-		require.False(t, annos.Contains(&v2.GrantAlreadyRevoked{}))
-		require.Equal(t, serverAdministrator, users.roles["user-1"])
-	})
 
 	t.Run("stale revoke of a role while ServerAdministrator", func(t *testing.T) {
 		t.Parallel()
@@ -590,4 +580,70 @@ func TestSiteEntitlements_ExclusionGroup(t *testing.T) {
 	for _, e := range entsB {
 		require.Equal(t, groupB, groupOf(e))
 	}
+}
+
+// TestSite_SelfLockoutGuard asserts that a Grant or Revoke that would write a
+// new role for the signed-in user is refused with FailedPrecondition and no
+// write, while no-op outcomes stay no-ops.
+func TestSite_SelfLockoutGuard(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	t.Run("grant is refused", func(t *testing.T) {
+		t.Parallel()
+
+		users := newSiteTestUsers(map[string]string{testSelfUserID: siteAdministrator})
+		s := newSiteBuilder(newSiteTestClient(t, users))
+
+		_, err := s.Grant(ctx, testUserPrincipal(testSelfUserID), testSiteEntitlement(viewer))
+		require.Equal(t, codes.FailedPrecondition, status.Code(err))
+		require.Empty(t, users.recordedPuts())
+	})
+
+	t.Run("grant of the held role stays a no-op", func(t *testing.T) {
+		t.Parallel()
+
+		users := newSiteTestUsers(map[string]string{testSelfUserID: siteAdministrator})
+		s := newSiteBuilder(newSiteTestClient(t, users))
+
+		annos, err := s.Grant(ctx, testUserPrincipal(testSelfUserID), testSiteEntitlement(siteAdministrator))
+		require.NoError(t, err)
+		require.True(t, annos.Contains(&v2.GrantAlreadyExists{}))
+		require.Empty(t, users.recordedPuts())
+	})
+
+	t.Run("revoke is refused", func(t *testing.T) {
+		t.Parallel()
+
+		users := newSiteTestUsers(map[string]string{testSelfUserID: siteAdministrator})
+		s := newSiteBuilder(newSiteTestClient(t, users))
+
+		_, err := s.Revoke(ctx, testSiteGrant(siteAdministrator, testSelfUserID))
+		require.Equal(t, codes.FailedPrecondition, status.Code(err))
+		require.Empty(t, users.recordedPuts())
+	})
+
+	t.Run("revoke of a role not held stays a no-op", func(t *testing.T) {
+		t.Parallel()
+
+		users := newSiteTestUsers(map[string]string{testSelfUserID: siteAdministrator})
+		s := newSiteBuilder(newSiteTestClient(t, users))
+
+		annos, err := s.Revoke(ctx, testSiteGrant(viewer, testSelfUserID))
+		require.NoError(t, err)
+		require.True(t, annos.Contains(&v2.GrantAlreadyRevoked{}))
+		require.Empty(t, users.recordedPuts())
+	})
+
+	t.Run("other users are unaffected", func(t *testing.T) {
+		t.Parallel()
+
+		users := newSiteTestUsers(map[string]string{"user-1": viewer})
+		s := newSiteBuilder(newSiteTestClient(t, users))
+
+		_, err := s.Grant(ctx, testUserPrincipal("user-1"), testSiteEntitlement(creator))
+		require.NoError(t, err)
+		require.Equal(t, []recordedPut{{userID: "user-1", siteRole: creator}}, users.recordedPuts())
+	})
 }

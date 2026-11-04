@@ -144,11 +144,11 @@ func siteRoleExclusionGroup(site *v2.Resource) string {
 	return "site-role:" + site.Id.Resource
 }
 
-// errServerAdminProtected refuses a write that would change a ServerAdministrator:
-// a server-wide role this connector cannot assign, so it could not undo the write.
+// errServerAdminProtected refuses a grant over a ServerAdministrator: a
+// server-wide role this connector cannot restore, so it could not undo the write.
 func errServerAdminProtected(action, userID string) error {
 	return status.Errorf(codes.FailedPrecondition,
-		"site role: cannot %s for user %s: they hold %s, a server-wide role this connector cannot assign back; change it in Tableau Server",
+		"site role: cannot %s for user %s: they hold %s, a server-wide role this connector cannot restore; a server administrator has to change it in Tableau",
 		action, userID, serverAdministrator)
 }
 
@@ -162,19 +162,10 @@ func apiRoleForSlug(slug string) (string, bool) {
 	return "", false
 }
 
-// Grant sets the user's site role to the entitlement's role. It reads the current
-// role without the cache first, then:
-//   - already the target role: no write, GrantAlreadyExists.
-//   - ServerAdministrator: no write, FailedPrecondition (errServerAdminProtected).
-//     Any other role, including SiteAdministrator*, is replaced: the caller asked
-//     for exactly this role.
-//   - otherwise: write, and report GrantReplaced for the displaced site-role grant
-//     when the previous role is a known site role.
-//
-// Rate-limit annotations from the read are merged into every result.
+// Grant sets the user's site role to the entitlement's role. A user who already
+// holds it gets GrantAlreadyExists; a ServerAdministrator is refused with
+// FailedPrecondition. Any other role is replaced, reporting GrantReplaced.
 func (s *siteBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
-	log := ctxzap.Extract(ctx)
-
 	roleName, err := parseEntitlementSlug(entitlement.Id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse role from entitlement ID: %w", err)
@@ -190,51 +181,28 @@ func (s *siteBuilder) Grant(ctx context.Context, principal *v2.Resource, entitle
 		return nil, fmt.Errorf("role %q is not assigned by this connector (it exists only on Tableau Server)", apiRoleName)
 	}
 
-	user, getAnnos, err := s.client.GetUser(ctx, principalID)
-	if err != nil {
-		if client.IsNotFoundError(err) {
-			return getAnnos, status.Errorf(codes.NotFound, "site role: cannot grant %s: user %s not found", apiRoleName, principalID)
+	rc := s.roleChange(principalID, apiRoleName)
+	rc.refuseGrant = func(siteRole string) error {
+		if siteRole != serverAdministrator {
+			return nil
 		}
-		return getAnnos, fmt.Errorf("failed to read user %s for site role grant: %w", principalID, err)
+		return errServerAdminProtected("grant "+apiRoleName, principalID)
+	}
+	rc.replacedGrantID = func(siteRole string) (string, bool) {
+		oldSlug, known := roles[siteRole]
+		if !known {
+			return "", false
+		}
+		return grant.NewGrantID(principal.Id, ent.NewPermissionEntitlement(entitlement.Resource, oldSlug)), true
 	}
 
-	if user.SiteRole == apiRoleName {
-		log.Debug("site role grant: user already holds role, no write needed",
-			zap.String("user_id", principalID), zap.String("site_role", user.SiteRole))
-		return mergeAnnotations(getAnnos, annotations.New(&v2.GrantAlreadyExists{})), nil
-	}
-
-	if user.SiteRole == serverAdministrator {
-		log.Warn("site role grant refused: user holds ServerAdministrator",
-			zap.String("user_id", principalID), zap.String("requested_role", apiRoleName))
-		return getAnnos, errServerAdminProtected("grant "+apiRoleName, principalID)
-	}
-
-	putAnnos, err := s.client.UpdateUserSiteRole(ctx, principalID, apiRoleName)
-	annos := mergeAnnotations(getAnnos, putAnnos)
-	if err != nil {
-		return annos, fmt.Errorf("failed to grant %s role to user %s: %w", roleName, principalID, err)
-	}
-
-	if oldSlug, known := roles[user.SiteRole]; known {
-		oldEntitlement := ent.NewPermissionEntitlement(entitlement.Resource, oldSlug)
-		annos.Append(&v2.GrantReplaced{ReplacedGrantId: grant.NewGrantID(principal.Id, oldEntitlement)})
-	}
-
-	return annos, nil
+	return rc.grantRole(ctx, apiRoleName)
 }
 
-// Revoke resets the user to Unlicensed, but only while they still hold the
-// revoked role. After a fresh read, a missing user or a different role (e.g. a
-// later Grant replaced it) is GrantAlreadyRevoked: writing Unlicensed would wipe
-// access this revoke never targeted. Revoking Unlicensed from an Unlicensed user
-// is the same no-op (the floor role). A held ServerAdministrator is refused with
-// FailedPrecondition and no write; held SiteAdministrator* roles are reset.
-// Rate-limit annotations from the read are merged into every result.
+// Revoke resets the user to Unlicensed while they still hold the revoked role,
+// including any administrator role. A missing user, a different role, or an
+// already Unlicensed user is GrantAlreadyRevoked with no write.
 func (s *siteBuilder) Revoke(ctx context.Context, g *v2.Grant) (annotations.Annotations, error) {
-	log := ctxzap.Extract(ctx)
-	principalID := g.Principal.Id.Resource
-
 	roleName, err := parseEntitlementSlug(g.Entitlement.Id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse role from entitlement ID: %w", err)
@@ -244,39 +212,18 @@ func (s *siteBuilder) Revoke(ctx context.Context, g *v2.Grant) (annotations.Anno
 		return nil, fmt.Errorf("unknown role: %s", roleName)
 	}
 
-	user, getAnnos, err := s.client.GetUser(ctx, principalID)
-	if err != nil {
-		if client.IsNotFoundError(err) {
-			log.Debug("site role revoke: user not found, nothing to revoke", zap.String("user_id", principalID))
-			return mergeAnnotations(getAnnos, annotations.New(&v2.GrantAlreadyRevoked{})), nil
-		}
-		return getAnnos, fmt.Errorf("failed to read user %s for site role revoke: %w", principalID, err)
-	}
+	return s.roleChange(g.Principal.Id.Resource, apiRoleName).revokeRole(ctx)
+}
 
-	if user.SiteRole != apiRoleName {
-		log.Debug("site role revoke: user no longer holds role, nothing to revoke",
-			zap.String("user_id", principalID), zap.String("role", apiRoleName), zap.String("site_role", user.SiteRole))
-		return mergeAnnotations(getAnnos, annotations.New(&v2.GrantAlreadyRevoked{})), nil
+// roleChange builds the shared role write for one user and site role.
+func (s *siteBuilder) roleChange(userID, apiRoleName string) *roleChange {
+	return &roleChange{
+		client:  s.client,
+		label:   "site role",
+		subject: apiRoleName,
+		userID:  userID,
+		holds:   func(siteRole string) bool { return siteRole == apiRoleName },
 	}
-
-	if apiRoleName == unlicensed {
-		log.Debug("site role revoke: user already Unlicensed (floor role), nothing to remove",
-			zap.String("user_id", principalID))
-		return mergeAnnotations(getAnnos, annotations.New(&v2.GrantAlreadyRevoked{})), nil
-	}
-
-	if apiRoleName == serverAdministrator {
-		log.Warn("site role revoke refused: user holds ServerAdministrator", zap.String("user_id", principalID))
-		return getAnnos, errServerAdminProtected("revoke "+apiRoleName, principalID)
-	}
-
-	putAnnos, err := s.client.UpdateUserSiteRole(ctx, principalID, unlicensed)
-	annos := mergeAnnotations(getAnnos, putAnnos)
-	if err != nil {
-		return annos, fmt.Errorf("failed to revoke site role from user %s: %w", principalID, err)
-	}
-
-	return annos, nil
 }
 
 func newSiteBuilder(client *client.Client) *siteBuilder {
