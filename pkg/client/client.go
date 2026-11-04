@@ -88,6 +88,8 @@ type Client struct {
 	authToken  string
 	siteId     string
 	baseUrl    string
+	// userID is the user the access token signed in as.
+	userID string
 }
 
 // New creates an authenticated Tableau API client.
@@ -125,7 +127,13 @@ func New(ctx context.Context, serverPath, siteID, accessTokenName, accessTokenSe
 		baseUrl:    baseURL,
 		authToken:  credentials.Token,
 		siteId:     credentials.Site.ID,
+		userID:     credentials.User.ID,
 	}, nil
+}
+
+// AuthenticatedUserID returns the ID of the Tableau user the connector signed in as.
+func (c *Client) AuthenticatedUserID() string {
+	return c.userID
 }
 
 // =============================================================================
@@ -311,7 +319,7 @@ func (c *Client) UpdateUserSiteRole(ctx context.Context, userId, siteRole string
 	userBody := map[string]any{pathUser: map[string]any{"siteRole": siteRole}}
 	annos, err := c.doRequest(ctx, http.MethodPut, urlUpdateUserSiteRole, &res, userBody)
 	if err != nil {
-		return nil, err
+		return annos, err
 	}
 
 	return annos, nil
@@ -326,7 +334,7 @@ func (c *Client) RemoveUserFromSite(ctx context.Context, userId string) (annotat
 
 	annos, err := c.doRequest(ctx, http.MethodDelete, urlRemoveUserFromSite, nil, nil)
 	if err != nil {
-		return nil, err
+		return annos, err
 	}
 
 	return annos, nil

@@ -102,3 +102,45 @@ func TestGetUser_NotFound(t *testing.T) {
 	require.Nil(t, user)
 	require.True(t, IsNotFoundError(err), "expected IsNotFoundError(err) to be true, got err: %v", err)
 }
+
+// TestNew_KeepsAuthenticatedUserID asserts that New keeps the user ID Login
+// returns, which provisioning uses to avoid changing the connector's own role.
+func TestNew_KeepsAuthenticatedUserID(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"credentials":{"site":{"id":"` + testSiteId + `"},"user":{"id":"me"},"token":"test-token"}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := New(context.Background(), "unused", testSiteId, "token-name", "token-secret", "3.19", srv.URL)
+	require.NoError(t, err)
+	require.Equal(t, "me", c.AuthenticatedUserID())
+}
+
+// TestWriteFailures_KeepAnnotations asserts that a failed role update or site
+// removal still returns the response annotations (rate-limit data).
+func TestWriteFailures_KeepAnnotations(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Ratelimit-Limit", "100")
+		w.Header().Set("X-Ratelimit-Remaining", "99")
+		w.Header().Set("X-Ratelimit-Reset", "30")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":{"summary":"Internal Error","detail":"boom","code":"0x3"}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := newTestClient(t, srv)
+
+	annos, err := c.UpdateUserSiteRole(context.Background(), "user-1", "Viewer")
+	require.Error(t, err)
+	require.NotEmpty(t, annos)
+
+	annos, err = c.RemoveUserFromSite(context.Background(), "user-1")
+	require.Error(t, err)
+	require.NotEmpty(t, annos)
+}
