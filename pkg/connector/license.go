@@ -277,7 +277,7 @@ func (l *licenseBuilder) Grants(ctx context.Context, resource *v2.Resource, opts
 func (l *licenseBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
 	targetTier, ok := licensesMap[entitlement.Resource.Id.Resource]
 	if !ok {
-		return nil, fmt.Errorf("unknown license %s", entitlement.Resource.Id.Resource)
+		return nil, status.Errorf(codes.InvalidArgument, "unknown license %s", entitlement.Resource.Id.Resource)
 	}
 
 	rc := l.roleChange(principal.Id.Resource, targetTier)
@@ -312,7 +312,7 @@ func (l *licenseBuilder) Grant(ctx context.Context, principal *v2.Resource, enti
 func (l *licenseBuilder) Revoke(ctx context.Context, g *v2.Grant) (annotations.Annotations, error) {
 	tier, ok := licensesMap[g.Entitlement.Resource.Id.Resource]
 	if !ok {
-		return nil, fmt.Errorf("unknown license %s", g.Entitlement.Resource.Id.Resource)
+		return nil, status.Errorf(codes.InvalidArgument, "unknown license %s", g.Entitlement.Resource.Id.Resource)
 	}
 
 	return l.roleChange(g.Principal.Id.Resource, tier).revokeRole(ctx)

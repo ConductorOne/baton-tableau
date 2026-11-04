@@ -408,6 +408,41 @@ func TestLicenseRevoke_UserNotFound(t *testing.T) {
 	require.True(t, annos.Contains(&v2.GrantAlreadyRevoked{}))
 }
 
+// TestLicense_UnknownLicense asserts that an unknown license resource ID is
+// rejected with InvalidArgument before any write.
+func TestLicense_UnknownLicense(t *testing.T) {
+	t.Parallel()
+
+	ent := testLicenseEntitlement("platinum")
+
+	t.Run("grant", func(t *testing.T) {
+		t.Parallel()
+
+		var puts []recordedPut
+		l := newLicenseBuilder(newLicenseTestClient(t, map[string]string{"user-1": creator}, &puts))
+
+		_, err := l.Grant(context.Background(), testUserPrincipal("user-1"), ent)
+		require.Error(t, err)
+		require.Equal(t, codes.InvalidArgument, status.Code(err))
+		require.Empty(t, puts)
+	})
+
+	t.Run("revoke", func(t *testing.T) {
+		t.Parallel()
+
+		var puts []recordedPut
+		l := newLicenseBuilder(newLicenseTestClient(t, map[string]string{"user-1": creator}, &puts))
+
+		_, err := l.Revoke(context.Background(), &v2.Grant{
+			Entitlement: ent,
+			Principal:   testUserPrincipal("user-1"),
+		})
+		require.Error(t, err)
+		require.Equal(t, codes.InvalidArgument, status.Code(err))
+		require.Empty(t, puts)
+	})
+}
+
 // requireSingleRateLimit asserts annos carries exactly one RateLimitDescription
 // and that it is the one the mock GET responses stamped.
 func requireSingleRateLimit(t *testing.T, annos annotations.Annotations) {
