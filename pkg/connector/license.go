@@ -23,8 +23,8 @@ var licenses = []string{creator, explorer, viewer, unlicensed}
 
 // licenseExclusionGroup marks the four tier entitlements as mutually exclusive:
 // a user's single site role puts them in exactly one tier. It is deliberately
-// unscoped, so the SDK shares one group across the tier resources, and sets no
-// default or order, so C1 gets no fallback tier or privilege ranking.
+// unscoped, so the SDK shares one group across the tier resources. Unlicensed is
+// the default (order 0) and no other tier is ranked.
 const licenseExclusionGroup = "tableau-license"
 
 var licensesMap = map[string]string{
@@ -205,19 +205,24 @@ func (l *licenseBuilder) countConsumedByTier(ctx context.Context, site *client.S
 	return consumed, nil
 }
 
-func (l *licenseBuilder) Entitlements(_ context.Context, _ *v2.Resource, _ rs.SyncOpAttrs) ([]*v2.Entitlement, *rs.SyncOpResults, error) {
-	return nil, nil, nil
-}
+// Entitlements declares the single "member" entitlement of a license tier. The
+// four tiers share one exclusion group, and Unlicensed is its default: the
+// fallback when another tier is revoked. This is not a static entitlement,
+// because one static template is copied to every tier and would mark all four
+// as the default.
+func (l *licenseBuilder) Entitlements(_ context.Context, resource *v2.Resource, _ rs.SyncOpAttrs) ([]*v2.Entitlement, *rs.SyncOpResults, error) {
+	group := ent.WithExclusionGroup(licenseExclusionGroup)
+	if resource.Id.Resource == strings.ToLower(unlicensed) {
+		group = ent.WithExclusionGroupDefault(licenseExclusionGroup, 0)
+	}
 
-// StaticEntitlements declares the single "member" entitlement every license tier exposes.
-func (l *licenseBuilder) StaticEntitlements(_ context.Context, _ rs.SyncOpAttrs) ([]*v2.Entitlement, *rs.SyncOpResults, error) {
 	en := ent.NewAssignmentEntitlement(
-		nil,
+		resource,
 		memberEntitlement,
 		ent.WithGrantableTo(resourceTypeUser),
 		ent.WithDisplayName("License member"),
 		ent.WithDescription("Member of License in Tableau"),
-		ent.WithExclusionGroup(licenseExclusionGroup),
+		group,
 	)
 
 	return []*v2.Entitlement{en}, nil, nil

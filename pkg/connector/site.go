@@ -95,9 +95,13 @@ func (s *siteBuilder) List(ctx context.Context, _ *v2.ResourceId, _ rs.SyncOpAtt
 func (s *siteBuilder) Entitlements(_ context.Context, resource *v2.Resource, _ rs.SyncOpAttrs) ([]*v2.Entitlement, *rs.SyncOpResults, error) {
 	var rv []*v2.Entitlement
 	for _, role := range roles {
+		group := ent.WithExclusionGroup(siteRoleExclusionGroup(resource))
+		if role == roles[unlicensed] {
+			group = ent.WithExclusionGroupDefault(siteRoleExclusionGroup(resource), 0)
+		}
 		permissionOptions := []ent.EntitlementOption{
 			ent.WithGrantableTo(resourceTypeUser),
-			ent.WithExclusionGroup(siteRoleExclusionGroup(resource)),
+			group,
 			ent.WithDescription(fmt.Sprintf("Role in %s Tableau site", resource.DisplayName)),
 			ent.WithDisplayName(fmt.Sprintf("%s Site %s", resource.DisplayName, role)),
 		}
@@ -140,6 +144,7 @@ func (s *siteBuilder) Grants(ctx context.Context, resource *v2.Resource, opts rs
 
 // siteRoleExclusionGroup is shared by one site's Site Role entitlements: a user
 // holds one role per site, and the site ID keeps different sites apart.
+// Unlicensed is the group's default (order 0).
 func siteRoleExclusionGroup(site *v2.Resource) string {
 	return "site-role:" + site.Id.Resource
 }
