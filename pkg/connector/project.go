@@ -9,6 +9,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/pagination"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-tableau/pkg/client"
+	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -54,7 +55,8 @@ func isDefaultWorkbookSlug(slug string) bool {
 }
 
 type projectBuilder struct {
-	client *client.Client
+	client               *client.Client
+	unfilterableProjects sampledWarn
 }
 
 func (p *projectBuilder) ResourceType(_ context.Context) *v2.ResourceType {
@@ -177,10 +179,17 @@ func (p *projectBuilder) Grants(ctx context.Context, resource *v2.Resource, opts
 
 		// If the project is locked, kick off workbook iteration in the next page.
 		if isLockedToProject(projectContentPermissions(resource)) {
-			b.Push(pagination.PageState{
-				ResourceTypeID: resourceTypeWorkbook.Id,
-				Token:          "",
-			})
+			if client.IsFilterSafe(resource.DisplayName) {
+				b.Push(pagination.PageState{
+					ResourceTypeID: resourceTypeWorkbook.Id,
+					Token:          "",
+				})
+			} else {
+				p.unfilterableProjects.log(ctx, "skipping inherited workbook grants for locked project: name contains characters Tableau filters reject (comma or ampersand)",
+					zap.String("project_id", projectID),
+					zap.String("project_name", resource.DisplayName),
+				)
+			}
 		}
 
 		nextToken, err := b.Marshal()
@@ -194,7 +203,7 @@ func (p *projectBuilder) Grants(ctx context.Context, resource *v2.Resource, opts
 		// locked project, paginating through all workbooks.
 		workbooks, nextWorkbookToken, _, err := p.client.GetWorkbooks(ctx, b.PageToken(), client.WithFilter("projectName:eq:"+resource.DisplayName))
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("failed to list workbooks for project %s: %w", projectID, err)
 		}
 
 		var rv []*v2.Grant
