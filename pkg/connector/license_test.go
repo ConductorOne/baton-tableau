@@ -302,7 +302,7 @@ func TestLicenseGrant_CrossTierNonAdmin(t *testing.T) {
 
 // TestLicenseGrant_CrossTierAdmin asserts that granting a different tier to a
 // user currently holding an admin role is refused with FailedPrecondition
-// rather than silently stripping admin rights, and does not write.
+// and does not write.
 func TestLicenseGrant_CrossTierAdmin(t *testing.T) {
 	t.Parallel()
 

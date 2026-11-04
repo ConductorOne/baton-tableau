@@ -280,7 +280,7 @@ func (l *licenseBuilder) Grant(ctx context.Context, principal *v2.Resource, enti
 	user, getAnnos, err := l.client.GetUser(ctx, principal.Id.Resource)
 	if err != nil {
 		if client.IsNotFoundError(err) {
-			return getAnnos, status.Errorf(codes.NotFound, "license: cannot grant %s: user %s not found", targetTier, principal.Id.Resource)
+			return getAnnos, fmt.Errorf("license: cannot grant %s: user %s not found: %w", targetTier, principal.Id.Resource, err)
 		}
 		return getAnnos, fmt.Errorf("failed to read user %s for license grant: %w", principal.Id.Resource, err)
 	}
@@ -303,7 +303,7 @@ func (l *licenseBuilder) Grant(ctx context.Context, principal *v2.Resource, enti
 		return annos, fmt.Errorf("failed to grant %s license to user %s: %w", targetTier, principal.Id.Resource, err)
 	}
 
-	if oldTier, ok := tierForRole(user.SiteRole); ok && oldTier != targetTier {
+	if oldTier, ok := tierForRole(user.SiteRole); ok {
 		oldResource := &v2.Resource{
 			Id: &v2.ResourceId{
 				ResourceType: resourceTypeLicense.Id,
