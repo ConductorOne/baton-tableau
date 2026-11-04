@@ -397,6 +397,28 @@ func TestSiteGrant_InvalidTargets(t *testing.T) {
 	require.Zero(t, users.gets, "invalid targets must be rejected before reading")
 }
 
+// TestSite_InvalidRoleIsInvalidArgument asserts that an unparseable entitlement
+// ID or unknown role slug is InvalidArgument on both Grant and Revoke, with no
+// read or write.
+func TestSite_InvalidRoleIsInvalidArgument(t *testing.T) {
+	t.Parallel()
+
+	users := newSiteTestUsers(map[string]string{"user-1": viewer})
+	s := newSiteBuilder(newSiteTestClient(t, users))
+	ctx := context.Background()
+
+	for _, entID := range []string{"site:site-1:bogus", "malformed"} {
+		_, err := s.Grant(ctx, testUserPrincipal("user-1"), &v2.Entitlement{Id: entID})
+		require.Equal(t, codes.InvalidArgument, status.Code(err), "grant %q", entID)
+
+		_, err = s.Revoke(ctx, &v2.Grant{Entitlement: &v2.Entitlement{Id: entID}, Principal: testUserPrincipal("user-1")})
+		require.Equal(t, codes.InvalidArgument, status.Code(err), "revoke %q", entID)
+	}
+
+	require.Empty(t, users.recordedPuts())
+	require.Zero(t, users.gets, "invalid roles must be rejected before reading")
+}
+
 // TestSiteGrant_ReplaceUnknownPriorRole asserts that a prior role outside the
 // known site roles is replaced without a GrantReplaced annotation.
 func TestSiteGrant_ReplaceUnknownPriorRole(t *testing.T) {

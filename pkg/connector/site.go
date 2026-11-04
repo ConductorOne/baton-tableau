@@ -173,13 +173,13 @@ func apiRoleForSlug(slug string) (string, bool) {
 func (s *siteBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
 	roleName, err := parseEntitlementSlug(entitlement.Id)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse role from entitlement ID: %w", err)
+		return nil, status.Errorf(codes.InvalidArgument, "failed to parse role from entitlement ID: %v", err)
 	}
 	principalID := principal.Id.Resource
 
 	apiRoleName, ok := apiRoleForSlug(roleName)
 	if !ok {
-		return nil, fmt.Errorf("unknown role: %s", roleName)
+		return nil, status.Errorf(codes.InvalidArgument, "unknown role: %s", roleName)
 	}
 
 	if nonGrantableRoles[apiRoleName] {
@@ -210,11 +210,11 @@ func (s *siteBuilder) Grant(ctx context.Context, principal *v2.Resource, entitle
 func (s *siteBuilder) Revoke(ctx context.Context, g *v2.Grant) (annotations.Annotations, error) {
 	roleName, err := parseEntitlementSlug(g.Entitlement.Id)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse role from entitlement ID: %w", err)
+		return nil, status.Errorf(codes.InvalidArgument, "failed to parse role from entitlement ID: %v", err)
 	}
 	apiRoleName, ok := apiRoleForSlug(roleName)
 	if !ok {
-		return nil, fmt.Errorf("unknown role: %s", roleName)
+		return nil, status.Errorf(codes.InvalidArgument, "unknown role: %s", roleName)
 	}
 
 	return s.roleChange(g.Principal.Id.Resource, apiRoleName).revokeRole(ctx)
