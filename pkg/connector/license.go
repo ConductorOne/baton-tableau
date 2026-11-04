@@ -274,7 +274,7 @@ func (l *licenseBuilder) Grant(ctx context.Context, principal *v2.Resource, enti
 
 	targetTier, ok := licensesMap[entitlement.Resource.Id.Resource]
 	if !ok {
-		return nil, fmt.Errorf("unknown license %s", entitlement.Resource.Id.Resource)
+		return nil, status.Errorf(codes.InvalidArgument, "unknown license %s", entitlement.Resource.Id.Resource)
 	}
 
 	user, getAnnos, err := l.client.GetUser(ctx, principal.Id.Resource)
@@ -326,7 +326,7 @@ func (l *licenseBuilder) Revoke(ctx context.Context, g *v2.Grant) (annotations.A
 
 	tier, ok := licensesMap[g.Entitlement.Resource.Id.Resource]
 	if !ok {
-		return nil, fmt.Errorf("unknown license %s", g.Entitlement.Resource.Id.Resource)
+		return nil, status.Errorf(codes.InvalidArgument, "unknown license %s", g.Entitlement.Resource.Id.Resource)
 	}
 
 	user, getAnnos, err := l.client.GetUser(ctx, principalID)
