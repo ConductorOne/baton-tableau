@@ -24,7 +24,6 @@
 //	Projects:
 //	- GET    /api/{version}/sites/{siteId}/projects                                                                              - List projects (paginated, supports filter)
 //	- GET    /api/{version}/sites/{siteId}/projects?filter=id:eq:{projectId}                                                     - Get project by ID
-//	- GET    /api/{version}/sites/{siteId}/projects?filter=name:eq:{projectName}                                                 - Get project by name
 //	- GET    /api/{version}/sites/{siteId}/projects/{projectId}/permissions                                                      - Get project permissions
 //	- PUT    /api/{version}/sites/{siteId}/projects/{projectId}/permissions                                                      - Add project permission
 //	- DELETE /api/{version}/sites/{siteId}/projects/{projectId}/permissions/users/{userId}/{cap}/{mode}                          - Delete user project permission
@@ -74,8 +73,6 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/annotations"
 	"github.com/conductorone/baton-sdk/pkg/uhttp"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // =============================================================================
@@ -392,24 +389,6 @@ func (c *Client) RemoveUserFromGroup(ctx context.Context, groupId, userId string
 // =============================================================================
 // Projects API
 // =============================================================================
-
-// GetProjectByName returns a single project by name using a server-side filter.
-// Returns nil if no project with that name is found.
-func (c *Client) GetProject(ctx context.Context, name string, id string) (*Project, annotations.Annotations, error) {
-	projects, _, annos, err := c.GetProjects(ctx, "", WithFilter("name:eq:"+name))
-	if err != nil {
-		return nil, annos, fmt.Errorf("failed to get project by name %q: %w", name, err)
-	}
-	if len(projects) == 0 {
-		return nil, annos, status.Errorf(codes.NotFound, "Project with name %q not found", name)
-	}
-	for _, project := range projects {
-		if project.ID == id {
-			return project, annos, nil
-		}
-	}
-	return nil, annos, status.Errorf(codes.NotFound, "Project with name %q and ID %q not found", name, id)
-}
 
 // GetProjects returns a page of projects on the site, optionally filtered by query parameters.
 func (c *Client) GetProjects(ctx context.Context, pageToken string, opts ...ReqOpt) ([]*Project, string, annotations.Annotations, error) {

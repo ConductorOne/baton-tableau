@@ -39,6 +39,10 @@ Tableau uses a permission inheritance model that affects how access is synced an
 
 - **Projects with `LockedToProject`**: When a project's content permissions are set to `LockedToProject`, workbooks inside that project inherit the project's permissions and cannot be granted or revoked independently — permissions must be changed at the project level instead.
 
+<Warning>
+Tableau does not allow commas (`,`) or ampersands (`&`) in the project names the connector uses to find a project's workbooks. If a project with locked permissions has one of these characters in its name, C1 can't sync the access its workbooks inherit from that project. We recommend renaming these projects without commas or ampersands.
+</Warning>
+
 - **Workbooks with `showTabs=true`**: Views (dashboards) inside these workbooks inherit their permissions from the workbook. View-level permissions cannot be granted or revoked independently — attempting to do so returns a clear error. Use the workbook entitlement instead.
 
 - **Workbooks with `showTabs=false`**: Views have their own independent permission assignments, which can be granted and revoked directly.
