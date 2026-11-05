@@ -95,25 +95,40 @@
     {
       "name": "access-token-name",
       "displayName": "Access Token Name",
-      "description": "Access token name used to connect to the Tableau API",
-      "isRequired": true,
-      "stringField": {
-        "rules": {
-          "isRequired": true
-        }
-      }
+      "description": "Access token name used to connect to the Tableau API. Required unless connected app credentials are supplied",
+      "stringField": {}
     },
     {
       "name": "access-token-secret",
       "displayName": "Access Token Secret",
-      "description": "Access token secret used to connect to the Tableau API",
-      "isRequired": true,
+      "description": "Access token secret used to connect to the Tableau API. Required unless connected app credentials are supplied",
       "isSecret": true,
-      "stringField": {
-        "rules": {
-          "isRequired": true
-        }
-      }
+      "stringField": {}
+    },
+    {
+      "name": "connected-app-client-id",
+      "displayName": "Connected App Client ID",
+      "description": "Client ID of a Tableau connected app configured for direct trust. Use instead of a personal access token",
+      "stringField": {}
+    },
+    {
+      "name": "connected-app-secret-id",
+      "displayName": "Connected App Secret ID",
+      "description": "Secret ID of the Tableau connected app",
+      "stringField": {}
+    },
+    {
+      "name": "connected-app-secret-value",
+      "displayName": "Connected App Secret Value",
+      "description": "Secret value of the Tableau connected app",
+      "isSecret": true,
+      "stringField": {}
+    },
+    {
+      "name": "connected-app-username",
+      "displayName": "Connected App Username",
+      "description": "Email address of the Tableau user the connector acts as. Needs the same site administrator rights as a personal access token owner",
+      "stringField": {}
     },
     {
       "name": "server-path",
@@ -139,6 +154,38 @@
       "stringField": {
         "defaultValue": "3.27"
       }
+    }
+  ],
+  "constraints": [
+    {
+      "kind": "CONSTRAINT_KIND_REQUIRED_TOGETHER",
+      "fieldNames": [
+        "access-token-name",
+        "access-token-secret"
+      ]
+    },
+    {
+      "kind": "CONSTRAINT_KIND_REQUIRED_TOGETHER",
+      "fieldNames": [
+        "connected-app-client-id",
+        "connected-app-secret-id",
+        "connected-app-secret-value",
+        "connected-app-username"
+      ]
+    },
+    {
+      "kind": "CONSTRAINT_KIND_AT_LEAST_ONE",
+      "fieldNames": [
+        "access-token-name",
+        "connected-app-client-id"
+      ]
+    },
+    {
+      "kind": "CONSTRAINT_KIND_MUTUALLY_EXCLUSIVE",
+      "fieldNames": [
+        "access-token-name",
+        "connected-app-client-id"
+      ]
     }
   ],
   "displayName": "Tableau",
