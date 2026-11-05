@@ -1,8 +1,8 @@
 ---
 title: Set up a Salesforce Tableau connector
 og:title: Set up a Salesforce Tableau connector - C1 docs
-og:description: C1 provides identity governance and just-in-time provisioning for Tableau. Integrate your Tableau instance with C1 to run user access reviews (UARs), enable just-in-time access requests, and automatically provision and deprovision access.
-description: C1 provides identity governance and just-in-time provisioning for Tableau. Integrate your Tableau instance with C1 to run user access reviews (UARs), enable just-in-time access requests, and automatically provision and deprovision access.
+og:description: C1 provides identity governance and just-in-time provisioning for Salesforce Tableau. Integrate your Salesforce Tableau instance with C1 to run user access reviews (UARs), enable just-in-time access requests, and automatically provision and deprovision access.
+description: C1 provides identity governance and just-in-time provisioning for Salesforce Tableau. Integrate your Salesforce Tableau instance with C1 to run user access reviews (UARs), enable just-in-time access requests, and automatically provision and deprovision access.
 sidebarTitle: Salesforce Tableau
 ---
 
@@ -22,9 +22,9 @@ The Tableau connector supports [automatic account provisioning and deprovisionin
 
 **Notes:**
 
-- Workbooks in a user's Personal Space do not belong to a project, and the connector does not sync them. Their views are not synced either, so the workbook and view counts in C1 are lower than the totals Tableau reports for the site.
-- Tableau adds every user to the built-in **All Users** group and does not allow that group to be changed through the API. C1 treats a request to add a member as already satisfied, and a revoke returns an error.
-- Users with the **Server Administrator** site role are server-level rather than site-scoped, so the connector skips them when it syncs group membership.
+- Workbooks in a user's Personal Space don't belong to a project, so C1 doesn't sync them or their views.
+- C1 syncs membership of the built-in **All Users** group but can't change it, because Tableau doesn't allow that group to be modified through the API.
+- C1 doesn't show users with the **Server Administrator** site role as group members.
 
 ## Licenses and seats
 
@@ -40,7 +40,7 @@ When your Tableau site has per-tier seat capacities configured, C1 tracks the pu
 </Note>
 
 <Note>
-Tableau does not allow a site role lower than the minimum site role of any group the user belongs to. Revoking a license from a user who belongs to a group configured with **Grant role on sign in** fails with the error `Site role of link user that belongs to license upon login cannot be lower than minimum site role of group`. Remove the user from that group first, then revoke the license.
+Revoking a license fails if the user belongs to a group with a **Grant role on sign in** minimum site role. Tableau returns `Site role of link user that belongs to license upon login cannot be lower than minimum site role of group`. Remove the user from that group first, then revoke the license.
 </Note>
 
 ## Permission inheritance
@@ -49,10 +49,6 @@ Tableau uses a permission inheritance model that affects how access is synced an
 
 - **Projects with `LockedToProject`**: When a project's content permissions are set to `LockedToProject`, workbooks inside that project inherit the project's permissions and cannot be granted or revoked independently — permissions must be changed at the project level instead.
 
-<Note>
-Tableau rejects commas (`,`) and ampersands (`&`) inside a filter value, even when they are encoded. The connector finds a locked project's workbooks by filtering on the project name, so when a locked project's name contains one of these characters, C1 does not sync the access its workbooks inherit from that project. The rest of the sync completes. Rename those projects without commas or ampersands to sync their inherited access.
-</Note>
-
 - **Workbooks with `showTabs=true`**: Views (dashboards) inside these workbooks inherit their permissions from the workbook. View-level permissions cannot be granted or revoked independently — attempting to do so returns a clear error. Use the workbook entitlement instead.
 
 - **Workbooks with `showTabs=false`**: Views have their own independent permission assignments, which can be granted and revoked directly.
@@ -60,7 +56,11 @@ Tableau rejects commas (`,`) and ampersands (`&`) inside a filter value, even wh
 - **Permissions granted to a group**: Every member of the group holds the permission, and C1 shows the group as the source of each member's grant.
 
 <Note>
-Revoking a permission from a user who holds it only through a group does not remove the user's access. The revoke succeeds, because Tableau has no user-level assignment to remove, and the next sync derives the permission from the group again. To remove the access, revoke the permission from the group or remove the user from the group.
+If a locked project's name contains a comma (`,`) or an ampersand (`&`), C1 doesn't sync the access its workbooks inherit from that project, because Tableau rejects these characters in the filter the connector uses to find them. Rename those projects without commas or ampersands to sync their inherited access.
+</Note>
+
+<Note>
+Revoking a permission from a user who holds it only through a group doesn't remove their access: the next sync shows it again, granted through the group. Revoke the permission from the group, or remove the user from the group.
 </Note>
 
 ## Gather Tableau credentials 
