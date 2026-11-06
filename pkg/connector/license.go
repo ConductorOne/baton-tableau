@@ -9,6 +9,7 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
+	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	ent "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
@@ -265,34 +266,35 @@ func (l *licenseBuilder) Grants(ctx context.Context, resource *v2.Resource, opts
 	return rv, &rs.SyncOpResults{NextPageToken: nextToken}, nil
 }
 
-// Grant sets the user's site role to the tier's base role after a fresh read:
+// Grant sets the user's site role to the tier's base role after a fresh read
+// and returns the new grant on a write (nil on every no-op or error path):
 // NotFound for a missing user, GrantAlreadyExists (no write) for a role already
 // in the tier, FailedPrecondition for an admin role, else a write that reports
 // GrantReplaced when the previous role belonged to a known tier.
-func (l *licenseBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
+func (l *licenseBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) ([]*v2.Grant, annotations.Annotations, error) {
 	log := ctxzap.Extract(ctx)
 
 	targetTier, ok := licensesMap[entitlement.Resource.Id.Resource]
 	if !ok {
-		return nil, status.Errorf(codes.InvalidArgument, "unknown license %s", entitlement.Resource.Id.Resource)
+		return nil, nil, status.Errorf(codes.InvalidArgument, "unknown license %s", entitlement.Resource.Id.Resource)
 	}
 
 	user, getAnnos, err := l.client.GetUser(ctx, principal.Id.Resource)
 	if err != nil {
 		if client.IsNotFoundError(err) {
-			return getAnnos, fmt.Errorf("license: cannot grant %s: user %s not found: %w", targetTier, principal.Id.Resource, err)
+			return nil, getAnnos, fmt.Errorf("license: cannot grant %s: user %s not found: %w", targetTier, principal.Id.Resource, err)
 		}
-		return getAnnos, fmt.Errorf("failed to read user %s for license grant: %w", principal.Id.Resource, err)
+		return nil, getAnnos, fmt.Errorf("failed to read user %s for license grant: %w", principal.Id.Resource, err)
 	}
 
 	if slices.Contains(RolesPerLicense[targetTier], user.SiteRole) {
 		log.Debug("license grant: user already in target tier, no write needed",
 			zap.String("user_id", principal.Id.Resource), zap.String("tier", targetTier), zap.String("site_role", user.SiteRole))
-		return mergeAnnotations(getAnnos, annotations.New(&v2.GrantAlreadyExists{})), nil
+		return nil, mergeAnnotations(getAnnos, annotations.New(&v2.GrantAlreadyExists{})), nil
 	}
 
 	if adminLicenseRoles[user.SiteRole] {
-		return getAnnos, status.Errorf(codes.FailedPrecondition,
+		return nil, getAnnos, status.Errorf(codes.FailedPrecondition,
 			"license: cannot grant %s to user %s: current site role %q is an administrative role; use the Site Role entitlement to change it explicitly",
 			targetTier, principal.Id.Resource, user.SiteRole)
 	}
@@ -300,7 +302,7 @@ func (l *licenseBuilder) Grant(ctx context.Context, principal *v2.Resource, enti
 	putAnnos, err := l.client.UpdateUserSiteRole(ctx, principal.Id.Resource, targetTier)
 	annos := mergeAnnotations(getAnnos, putAnnos)
 	if err != nil {
-		return annos, fmt.Errorf("failed to grant %s license to user %s: %w", targetTier, principal.Id.Resource, err)
+		return nil, annos, fmt.Errorf("failed to grant %s license to user %s: %w", targetTier, principal.Id.Resource, err)
 	}
 
 	if oldTier, ok := tierForRole(user.SiteRole); ok {
@@ -314,7 +316,8 @@ func (l *licenseBuilder) Grant(ctx context.Context, principal *v2.Resource, enti
 		annos.Append(&v2.GrantReplaced{ReplacedGrantId: grant.NewGrantID(principal.Id, oldEntitlement)})
 	}
 
-	return annos, nil
+	// Same shape as Grants() emits, so the grant ID matches the one sync reports.
+	return []*v2.Grant{grant.NewGrant(entitlement.Resource, memberEntitlement, principal.Id)}, annos, nil
 }
 
 // Revoke sets the user's site role to Unlicensed after a fresh read, returning
@@ -358,6 +361,8 @@ func (l *licenseBuilder) Revoke(ctx context.Context, g *v2.Grant) (annotations.A
 
 	return annos, nil
 }
+
+var _ connectorbuilder.ResourceProvisionerV2 = (*licenseBuilder)(nil)
 
 func newLicenseBuilder(client *client.Client) *licenseBuilder {
 	return &licenseBuilder{
