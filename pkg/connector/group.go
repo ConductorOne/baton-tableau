@@ -186,7 +186,7 @@ func (g *groupBuilder) Revoke(ctx context.Context, grant *v2.Grant) (annotations
 
 	annos, err := g.client.RemoveUserFromGroup(ctx, entitlement.Resource.Id.Resource, principal.Id.Resource)
 	if err != nil {
-		if isNotFoundError(err) {
+		if client.IsNotFoundError(err) {
 			return annotations.New(&v2.GrantAlreadyRevoked{}), nil
 		}
 		return annos, fmt.Errorf("failed to remove user from group: %w", err)

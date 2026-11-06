@@ -30,8 +30,8 @@ const (
 
 // roles maps Tableau API role names to display slugs.
 // ServerAdministrator is included for sync (Tableau returns it for server-level
-// admins) but cannot be granted via the REST API — it is a server-level role,
-// not a site-level role.
+// admins) but this connector does not assign it — it exists only on Tableau
+// Server.
 var roles = map[string]string{
 	siteAdministrator:         "site administrator",
 	siteAdministratorCreator:  "site administrator creator",
@@ -44,8 +44,8 @@ var roles = map[string]string{
 	unlicensed:                "unlicensed",
 }
 
-// nonGrantableRoles are roles that can appear during sync but cannot be
-// assigned via the REST API's Update User Site Role endpoint.
+// nonGrantableRoles are roles that can appear during sync but that this
+// connector does not assign.
 var nonGrantableRoles = map[string]bool{
 	serverAdministrator: true,
 }
@@ -155,7 +155,7 @@ func (s *siteBuilder) Grant(ctx context.Context, principal *v2.Resource, entitle
 	}
 
 	if nonGrantableRoles[apiRoleName] {
-		return nil, fmt.Errorf("role %q cannot be assigned via the Tableau REST API (server-level role, not site-level)", apiRoleName)
+		return nil, fmt.Errorf("role %q is not assigned by this connector (it exists only on Tableau Server)", apiRoleName)
 	}
 
 	annos, err := s.client.UpdateUserSiteRole(ctx, principalID, apiRoleName)
