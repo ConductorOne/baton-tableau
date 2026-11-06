@@ -119,9 +119,19 @@
 - **Description**: The Tableau site the connector is authenticated against. Acts as the top-level resource in the hierarchy.
 - **Children**: Users, Groups, Projects
 - **Entitlements**: Site roles per [Tableau REST API Site Roles](https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_new_site_roles.htm)
-- **Provisioning**:
-  - Grant: Update a user's site role
-  - Revoke: Set a user's site role to Unlicensed
+- **Exclusion group**: all site-role entitlements of a site share group `site-role:<site id>`; `Unlicensed` is the default (`WithExclusionGroupDefault`, order 0), so it is the only default in the group. The connector syncs one site (`List()` returns only `GetSite`).
+- **Provisioning** (shared helper `roleChange` in `pkg/connector/role_change.go`, also used by License Grant/Revoke; the read is always uncached):
+  - Grant: sets exactly the entitlement's role.
+    - Missing user: `NotFound` (wrapped error, `status.Code` stays `NotFound`).
+    - User already holds the role: no write, `GrantAlreadyExists`.
+    - Signed-in user (`Client.AuthenticatedUserID()`, the `Login` user): `FailedPrecondition`, no write.
+    - User holds `ServerAdministrator`: `FailedPrecondition`, no write (the connector cannot restore it; a server administrator has to restore it in Tableau).
+    - Otherwise: PUT, plus `GrantReplaced` for the previous site-role grant when the previous role is a known role. `SiteAdministrator*` roles are replaced (the explicit way to change them).
+  - Revoke: sets the user to `Unlicensed` only while they still hold the revoked role, including a held `SiteAdministrator*` or `ServerAdministrator`.
+    - Missing user, a different current role, or an already `Unlicensed` user: no write, `GrantAlreadyRevoked`.
+    - Signed-in user: `FailedPrecondition`, no write. No-op outcomes are checked first and stay no-ops.
+  - Rate-limit annotations from the read are merged into every result, including failures.
+  - Known limitation: a site-role write changes the license tier and the other way around, but C1 only updates the grant of the entitlement that was written. The other grant (license or site role) is corrected on the next sync.
 
 > **Site roles** (per [Tableau REST API documentation](https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_new_site_roles.htm)):
 >
@@ -187,14 +197,15 @@
   - `Viewer` — View and interact with published dashboards
   - `Unlicensed` — No access to Tableau site features
 - **Entitlements**:
-  - `member` — License is assigned to user (static entitlement); all four tiers share exclusion group `tableau-license` (unscoped, no default or order)
+  - `member` (`license:<tier>:member`) — License is assigned to user; all four tiers share exclusion group `tableau-license` (unscoped). It is emitted from `Entitlements()` per tier, not as a static entitlement, because one static template would mark all four tiers as default and fail sync invariant I5 ("multiple default entitlements"). `Unlicensed` is the only default (`WithExclusionGroupDefault`, order 0): the fallback when another tier is revoked.
 - **Seat counts** (License Profile trait):
   - **Purchased** — read from the site's per-tier capacity fields (`tierCreatorCapacity`, `tierExplorerCapacity`, `tierViewerCapacity`), which the Tableau API returns as JSON strings. Attached only when the value is a positive number; a `0` or absent capacity attaches no seats (avoids rendering "0 of 0"). The `Unlicensed` floor tier is never capped.
   - **Consumed** — counted server-side per tier via the users `siteRole` filter, reading `pagination.totalAvailable` (one request per tier instead of walking every user page).
   - Both are attached via `WithLicenseSeats` only when the tier is capped. Seat enrichment is best-effort: a failed site or count call still syncs the license resources, just without seats.
 - **Provisioning**:
-  - Grant: Assign a license to a user by updating their site role
-  - Revoke: Remove a license by setting the user's site role to Unlicensed
+  - Grant: Assign a license to a user by updating their site role, through the shared `roleChange` helper (see Sites). Same tier: `GrantAlreadyExists`. Admin role (`SiteAdministrator*`, `ServerAdministrator`) on a different tier: `FailedPrecondition`, no write. Signed-in user: `FailedPrecondition`, no write. Missing user: `NotFound`.
+  - Revoke: Remove a license by setting the user's site role to Unlicensed. Missing user, a user who no longer holds the tier, or an `Unlicensed` user: `GrantAlreadyRevoked`. Signed-in user: `FailedPrecondition`, no write.
+  - Known limitation: see Sites. A license write changes the site role too, but C1 only updates the license grant; the site-role grant is corrected on the next sync.
 
 > **Note**: License assignment is based on site role mapping:
 >
