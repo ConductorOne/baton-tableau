@@ -17,6 +17,7 @@ import (
 	"github.com/conductorone/baton-sdk/pkg/dotc1z"
 	sdksync "github.com/conductorone/baton-sdk/pkg/sync"
 	"github.com/conductorone/baton-sdk/pkg/types"
+	"github.com/conductorone/baton-sdk/pkg/types/grant"
 	"github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-tableau/pkg/client"
 	"github.com/stretchr/testify/require"
@@ -238,6 +239,29 @@ func testLicenseEntitlement(tier string) *v2.Entitlement {
 	}
 }
 
+// syncGrantID returns the ID Grants() emits for the user holding the tier, built
+// from the same license resource and user resource the sync uses.
+func syncGrantID(t *testing.T, tier, userID string) string {
+	t.Helper()
+
+	lic, err := licenseResource(tier, nil, 0)
+	require.NoError(t, err)
+	u, err := userResource(&client.User{ID: userID}, lic.Id)
+	require.NoError(t, err)
+	return grant.NewGrant(lic, memberEntitlement, u.Id).GetId()
+}
+
+// requireWriteGrant asserts that Grant returned exactly the grant sync would emit.
+func requireWriteGrant(t *testing.T, grants []*v2.Grant, tier, userID string) {
+	t.Helper()
+
+	require.Len(t, grants, 1)
+	require.Equal(t, strings.ToLower(tier), grants[0].GetEntitlement().GetResource().GetId().GetResource())
+	require.Equal(t, "license:"+strings.ToLower(tier)+":"+memberEntitlement, grants[0].GetEntitlement().GetId())
+	require.Equal(t, userID, grants[0].GetPrincipal().GetId().GetResource())
+	require.Equal(t, syncGrantID(t, tier, userID), grants[0].GetId())
+}
+
 // TestLicenseGrant_AlreadyInTier asserts that granting a tier to a user whose
 // current site role already satisfies that tier performs no write and reports
 // GrantAlreadyExists.
@@ -265,8 +289,9 @@ func TestLicenseGrant_AlreadyInTier(t *testing.T) {
 			c := newLicenseTestClient(t, map[string]string{"user-1": tt.curRole}, &puts)
 			l := newLicenseBuilder(c)
 
-			annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(tt.tier))
+			grants, annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(tt.tier))
 			require.NoError(t, err)
+			require.Empty(t, grants, "no-op grant returns no grants")
 			require.Empty(t, puts, "already-in-tier grant must not write")
 			require.True(t, annos.Contains(&v2.GrantAlreadyExists{}))
 			require.False(t, annos.Contains(&v2.GrantReplaced{}), "same-tier no-op replaces nothing")
@@ -284,8 +309,9 @@ func TestLicenseGrant_CrossTierNonAdmin(t *testing.T) {
 	c := newLicenseTestClient(t, map[string]string{"user-1": viewer}, &puts)
 	l := newLicenseBuilder(c)
 
-	annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
+	grants, annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
 	require.NoError(t, err)
+	requireWriteGrant(t, grants, creator, "user-1")
 
 	require.Len(t, puts, 1, "cross-tier grant must write exactly once")
 	require.Equal(t, "user-1", puts[0].userID)
@@ -322,8 +348,9 @@ func TestLicenseGrant_CrossTierAdmin(t *testing.T) {
 				target = creator
 			}
 
-			annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(target))
+			grants, annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(target))
 			require.Error(t, err)
+			require.Empty(t, grants)
 			require.Equal(t, codes.FailedPrecondition, status.Code(err))
 			require.False(t, annos.Contains(&v2.GrantReplaced{}))
 			require.Empty(t, puts, "refused admin cross-tier grant must not write")
@@ -340,8 +367,9 @@ func TestLicenseGrant_UnknownUser(t *testing.T) {
 	c := newLicenseTestClient(t, map[string]string{}, &puts)
 	l := newLicenseBuilder(c)
 
-	_, err := l.Grant(context.Background(), testUserPrincipal("ghost"), testLicenseEntitlement(creator))
+	grants, _, err := l.Grant(context.Background(), testUserPrincipal("ghost"), testLicenseEntitlement(creator))
 	require.Error(t, err)
+	require.Empty(t, grants)
 	require.Equal(t, codes.NotFound, status.Code(err))
 	require.Empty(t, puts)
 }
@@ -421,8 +449,9 @@ func TestLicense_UnknownLicense(t *testing.T) {
 		var puts []recordedPut
 		l := newLicenseBuilder(newLicenseTestClient(t, map[string]string{"user-1": creator}, &puts))
 
-		_, err := l.Grant(context.Background(), testUserPrincipal("user-1"), ent)
+		grants, _, err := l.Grant(context.Background(), testUserPrincipal("user-1"), ent)
 		require.Error(t, err)
+		require.Empty(t, grants)
 		require.Equal(t, codes.InvalidArgument, status.Code(err))
 		require.Empty(t, puts)
 	})
@@ -476,7 +505,7 @@ func TestLicense_GetUserServerError(t *testing.T) {
 		c := newLicenseTestClient(t, map[string]string{"user-1": licenseTestServerError}, &puts)
 		l := newLicenseBuilder(c)
 
-		annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
+		_, annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
 		require.Error(t, err)
 		require.NotEqual(t, codes.NotFound, status.Code(err))
 		require.False(t, annos.Contains(&v2.GrantReplaced{}))
@@ -511,7 +540,7 @@ func TestLicenseGrant_RoleOutsideEveryTier(t *testing.T) {
 	c := newLicenseTestClient(t, map[string]string{"user-1": "Guest"}, &puts)
 	l := newLicenseBuilder(c)
 
-	annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
+	_, annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
 	require.NoError(t, err)
 	require.Equal(t, []recordedPut{{userID: "user-1", siteRole: creator}}, puts)
 	require.False(t, annos.Contains(&v2.GrantReplaced{}))
@@ -528,7 +557,7 @@ func TestLicenseGrant_ExplorerCanPublishToCreator(t *testing.T) {
 	c := newLicenseTestClient(t, map[string]string{"user-1": explorerCanPublish}, &puts)
 	l := newLicenseBuilder(c)
 
-	annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
+	_, annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
 	require.NoError(t, err)
 	require.Equal(t, []recordedPut{{userID: "user-1", siteRole: creator}}, puts)
 
@@ -554,7 +583,7 @@ func TestLicense_PropagatesGetUserAnnotations(t *testing.T) {
 
 		var puts []recordedPut
 		l := newLicenseBuilder(newLicenseTestClient(t, map[string]string{"user-1": creator}, &puts))
-		annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
+		_, annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
 		require.NoError(t, err)
 		require.True(t, annos.Contains(&v2.GrantAlreadyExists{}))
 		requireSingleRateLimit(t, annos)
@@ -565,7 +594,7 @@ func TestLicense_PropagatesGetUserAnnotations(t *testing.T) {
 
 		var puts []recordedPut
 		l := newLicenseBuilder(newLicenseTestClient(t, map[string]string{"user-1": siteAdministratorCreator}, &puts))
-		annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(explorer))
+		_, annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(explorer))
 		require.Equal(t, codes.FailedPrecondition, status.Code(err))
 		requireSingleRateLimit(t, annos)
 	})
@@ -575,7 +604,7 @@ func TestLicense_PropagatesGetUserAnnotations(t *testing.T) {
 
 		var puts []recordedPut
 		l := newLicenseBuilder(newLicenseTestClient(t, map[string]string{}, &puts))
-		annos, err := l.Grant(context.Background(), testUserPrincipal("ghost"), testLicenseEntitlement(creator))
+		_, annos, err := l.Grant(context.Background(), testUserPrincipal("ghost"), testLicenseEntitlement(creator))
 		require.Equal(t, codes.NotFound, status.Code(err))
 		requireSingleRateLimit(t, annos)
 	})
@@ -585,7 +614,7 @@ func TestLicense_PropagatesGetUserAnnotations(t *testing.T) {
 
 		var puts []recordedPut
 		l := newLicenseBuilder(newLicenseTestClient(t, map[string]string{"user-1": viewer}, &puts))
-		annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
+		_, annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
 		require.NoError(t, err)
 		require.True(t, annos.Contains(&v2.GrantReplaced{}))
 		requireSingleRateLimit(t, annos)
@@ -674,7 +703,7 @@ func TestLicense_GrantThenRevokeSameClient(t *testing.T) {
 	c := newLicenseTestClient(t, map[string]string{"user-1": viewer}, &puts)
 	l := newLicenseBuilder(c)
 
-	_, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
+	_, _, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
 	require.NoError(t, err)
 	require.Len(t, puts, 1)
 	require.Equal(t, creator, puts[0].siteRole)
@@ -699,8 +728,9 @@ func TestLicenseGrant_RoleChangedBetweenGrants(t *testing.T) {
 	c := newLicenseTestClient(t, users, &puts)
 	l := newLicenseBuilder(c)
 
-	annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
+	grants, annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
 	require.NoError(t, err)
+	require.Empty(t, grants)
 	require.True(t, annos.Contains(&v2.GrantAlreadyExists{}))
 	require.Empty(t, puts)
 
@@ -708,8 +738,9 @@ func TestLicenseGrant_RoleChangedBetweenGrants(t *testing.T) {
 	users["user-1"] = viewer
 	licenseTestUsersMu.Unlock()
 
-	annos, err = l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
+	grants, annos, err = l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
 	require.NoError(t, err)
+	requireWriteGrant(t, grants, creator, "user-1")
 	require.False(t, annos.Contains(&v2.GrantAlreadyExists{}), "grant must see the externally changed role")
 	require.Len(t, puts, 1)
 	require.Equal(t, creator, puts[0].siteRole)
@@ -739,8 +770,9 @@ func TestLicenseGrant_FailedWriteNoReplacement(t *testing.T) {
 	c, err := client.New(context.Background(), "unused", licenseTestSiteID, "token-name", "token-secret", "3.19", srv.URL)
 	require.NoError(t, err)
 
-	annos, err := newLicenseBuilder(c).Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
+	grants, annos, err := newLicenseBuilder(c).Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
 	require.ErrorContains(t, err, "failed to grant Creator license")
+	require.Empty(t, grants)
 	require.False(t, annos.Contains(&v2.GrantReplaced{}))
 }
 

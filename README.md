@@ -46,8 +46,8 @@ baton resources
 - **Users** — All users on the site with email, site role, auth setting, and last login
 - **Groups** — Tableau groups with membership information
 - **Licenses** — License tiers (Creator, Explorer, Viewer, Unlicensed) with role-based assignment and purchased/consumed seat counts
-- **Projects** — Tableau projects with Read/Write permission assignments for users and groups
-- **Workbooks** — Tableau workbooks with 15 granular permission assignments for users and groups
+- **Projects** — Tableau projects with `View` and `Publish` permission assignments, plus the 16 `Workbook / ...` permissions that apply to the workbooks inside the project, for users and groups
+- **Workbooks** — Tableau workbooks with 16 granular permission assignments for users and groups
 - **Views** — Individual dashboards/views with granular permissions (inherited from workbook when `showTabs=true`)
 
 `baton-tableau` supports the following provisioning operations:
@@ -59,8 +59,8 @@ baton resources
 | Site Roles | Grant/Revoke | Assign/remove site-wide roles (Creator, Explorer, SiteAdministratorCreator, etc.) |
 | Licenses | Grant/Revoke | Assign/remove license tiers by updating site role |
 | Groups | Grant/Revoke | Add/remove users from groups |
-| Projects | Grant/Revoke | Assign/remove Read, Write permissions for users and groups |
-| Workbooks | Grant/Revoke | Assign/remove 15 granular permissions for users and groups |
+| Projects | Grant/Revoke | Assign/remove the `View` and `Publish` project permissions, plus the 16 `Workbook / ...` default workbook permissions, for users and groups |
+| Workbooks | Grant/Revoke | Assign/remove 16 granular permissions for users and groups |
 | Views | Grant/Revoke | Assign/remove view permissions for users and groups (when `showTabs=false`) |
 
 ## Important Notes
@@ -69,8 +69,8 @@ baton resources
 - **showTabs**: When a workbook has `showTabs=true`, view-level permissions are inherited from the workbook and cannot be modified independently. Grant/Revoke on those views are blocked with a descriptive error.
 - **Views in Personal Space**: Workbooks in a user's Personal Space (not under any project) are not synced, and therefore their views are not synced either.
 - **Server Administrators**: Users with `ServerAdministrator` site role are skipped during group membership sync (server-level admins are not site-scoped).
-- **Grant expansion**: Group-based permissions on projects, workbooks, and views are supported. When a group has a permission, all members inherit it.
-- **"All Users" group**: Tableau automatically adds every user to the built-in "All Users" group. This group cannot be modified via the API — Grant and Revoke operations on it are not supported. The connector syncs its membership to show each user's base site role.
+- **Grant expansion**: Group-based permissions on projects, workbooks, and views are supported. When a group has a permission, all members inherit it. Revoking such a permission from a single member does not remove their access: Tableau has no user-level assignment to remove, so the revoke returns `GrantAlreadyRevoked` and the next sync derives the permission from the group again. Revoke from the group, or remove the user from the group.
+- **"All Users" group**: Tableau automatically adds every user to the built-in "All Users" group. This group cannot be modified via the API: Grant is a no-op because the user is already a member, and Revoke returns an error. The connector syncs its membership to show each user's base site role.
 - **Site roles**: Grant and Revoke check the user's current role first and never overwrite a role they didn't target. See docs/connector.mdx for the exact rules.
 - **ServerAdministrator**: This Tableau Server role is sync-only; the connector cannot assign it. Granting a different site role, or a license tier other than Creator (which they already hold), to a user who holds `ServerAdministrator` fails with `FailedPrecondition` and writes nothing. Revoking a held `ServerAdministrator` sets the user to `Unlicensed`; the connector cannot restore it, so a server administrator has to restore it in Tableau.
 - **License grant is tier-aware**: A tier is a view of the user's single site role (for example, `SiteAdministratorCreator` already satisfies Creator), and the four tiers form one exclusion group (`tableau-license`) whose default is `Unlicensed` (order 0), with no other ranking. Granting a tier the user already holds is a no-op that keeps their role and returns `GrantAlreadyExists`. Granting a different tier to a user holding `SiteAdministrator`, `SiteAdministratorCreator`, `SiteAdministratorExplorer`, or `ServerAdministrator` fails with `FailedPrecondition`: change those roles through the Site Role entitlement (it assigns `SiteAdministrator*`; this connector does not assign `ServerAdministrator`). Any other user is set to the tier's base role, with `GrantReplaced` only when the previous role belonged to a recognized tier. A missing user returns `NotFound`.
