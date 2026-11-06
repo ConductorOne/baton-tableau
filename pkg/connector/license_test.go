@@ -903,7 +903,7 @@ func TestLicense_SelfLockoutGuard(t *testing.T) {
 		var puts []recordedPut
 		l := newLicenseBuilder(newLicenseTestClient(t, map[string]string{testSelfUserID: viewer}, &puts))
 
-		_, err := l.Grant(ctx, testUserPrincipal(testSelfUserID), testLicenseEntitlement(creator))
+		_, _, err := l.Grant(ctx, testUserPrincipal(testSelfUserID), testLicenseEntitlement(creator))
 		require.Equal(t, codes.FailedPrecondition, status.Code(err))
 		require.Empty(t, puts)
 	})
@@ -914,7 +914,7 @@ func TestLicense_SelfLockoutGuard(t *testing.T) {
 		var puts []recordedPut
 		l := newLicenseBuilder(newLicenseTestClient(t, map[string]string{testSelfUserID: viewer}, &puts))
 
-		annos, err := l.Grant(ctx, testUserPrincipal(testSelfUserID), testLicenseEntitlement(viewer))
+		_, annos, err := l.Grant(ctx, testUserPrincipal(testSelfUserID), testLicenseEntitlement(viewer))
 		require.NoError(t, err)
 		require.True(t, annos.Contains(&v2.GrantAlreadyExists{}))
 		require.Empty(t, puts)

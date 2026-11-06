@@ -6,6 +6,7 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
+	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	ent "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
@@ -169,21 +170,22 @@ func apiRoleForSlug(slug string) (string, bool) {
 
 // Grant sets the user's site role to the entitlement's role. A user who already
 // holds it gets GrantAlreadyExists; a ServerAdministrator is refused with
-// FailedPrecondition. Any other role is replaced, reporting GrantReplaced.
-func (s *siteBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
+// FailedPrecondition. Any other role is replaced, reporting GrantReplaced. A
+// write returns the new grant, built like Grants() emits it; other paths none.
+func (s *siteBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) ([]*v2.Grant, annotations.Annotations, error) {
 	roleName, err := parseEntitlementSlug(entitlement.Id)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "failed to parse role from entitlement ID: %v", err)
+		return nil, nil, status.Errorf(codes.InvalidArgument, "failed to parse role from entitlement ID: %v", err)
 	}
 	principalID := principal.Id.Resource
 
 	apiRoleName, ok := apiRoleForSlug(roleName)
 	if !ok {
-		return nil, status.Errorf(codes.InvalidArgument, "unknown role: %s", roleName)
+		return nil, nil, status.Errorf(codes.InvalidArgument, "unknown role: %s", roleName)
 	}
 
 	if nonGrantableRoles[apiRoleName] {
-		return nil, fmt.Errorf("role %q is not assigned by this connector (it exists only on Tableau Server)", apiRoleName)
+		return nil, nil, fmt.Errorf("role %q is not assigned by this connector (it exists only on Tableau Server)", apiRoleName)
 	}
 
 	rc := s.roleChange(principalID, apiRoleName)
@@ -199,6 +201,10 @@ func (s *siteBuilder) Grant(ctx context.Context, principal *v2.Resource, entitle
 			return "", false
 		}
 		return grant.NewGrantID(principal.Id, ent.NewPermissionEntitlement(entitlement.Resource, oldSlug)), true
+	}
+
+	rc.newGrant = func() *v2.Grant {
+		return grant.NewGrant(entitlement.Resource, roleName, principal.Id)
 	}
 
 	return rc.grantRole(ctx, apiRoleName)
@@ -230,6 +236,8 @@ func (s *siteBuilder) roleChange(userID, apiRoleName string) *roleChange {
 		holds:   func(siteRole string) bool { return siteRole == apiRoleName },
 	}
 }
+
+var _ connectorbuilder.ResourceProvisionerV2 = (*siteBuilder)(nil)
 
 func newSiteBuilder(client *client.Client) *siteBuilder {
 	return &siteBuilder{

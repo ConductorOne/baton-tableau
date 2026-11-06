@@ -150,6 +150,18 @@ func testSiteGrantID(userID, apiRole string) string {
 	return grant.NewGrantID(testUserPrincipal(userID).Id, testSiteEntitlement(apiRole))
 }
 
+// requireSiteWriteGrant asserts that Grant returned exactly the grant the
+// site-role Grants() sync emits for the user holding apiRole.
+func requireSiteWriteGrant(t *testing.T, grants []*v2.Grant, apiRole, userID string) {
+	t.Helper()
+
+	require.Len(t, grants, 1)
+	require.Equal(t, testSiteEntitlement(apiRole).GetId(), grants[0].GetEntitlement().GetId())
+	require.Equal(t, userID, grants[0].GetPrincipal().GetId().GetResource())
+	syncGrant := grant.NewGrant(testSiteResource(), roles[apiRole], testUserPrincipal(userID).Id)
+	require.Equal(t, syncGrant.GetId(), grants[0].GetId())
+}
+
 // TestSiteGrant_IdenticalRole asserts that granting the role the user already
 // holds writes nothing and reports GrantAlreadyExists.
 func TestSiteGrant_IdenticalRole(t *testing.T) {
@@ -158,8 +170,9 @@ func TestSiteGrant_IdenticalRole(t *testing.T) {
 	users := newSiteTestUsers(map[string]string{"user-1": viewer})
 	s := newSiteBuilder(newSiteTestClient(t, users))
 
-	annos, err := s.Grant(context.Background(), testUserPrincipal("user-1"), testSiteEntitlement(viewer))
+	grants, annos, err := s.Grant(context.Background(), testUserPrincipal("user-1"), testSiteEntitlement(viewer))
 	require.NoError(t, err)
+	require.Empty(t, grants, "no-op grant returns no grants")
 	require.Empty(t, users.recordedPuts(), "identical-role grant must not write")
 	require.True(t, annos.Contains(&v2.GrantAlreadyExists{}))
 }
@@ -173,8 +186,9 @@ func TestSiteGrant_ReplacesPriorSiteRole(t *testing.T) {
 	users := newSiteTestUsers(map[string]string{"user-1": viewer})
 	s := newSiteBuilder(newSiteTestClient(t, users))
 
-	annos, err := s.Grant(context.Background(), testUserPrincipal("user-1"), testSiteEntitlement(explorer))
+	grants, annos, err := s.Grant(context.Background(), testUserPrincipal("user-1"), testSiteEntitlement(explorer))
 	require.NoError(t, err)
+	requireSiteWriteGrant(t, grants, explorer, "user-1")
 	require.Equal(t, []recordedPut{{userID: "user-1", siteRole: explorer}}, users.recordedPuts())
 
 	replaced := &v2.GrantReplaced{}
@@ -193,8 +207,9 @@ func TestSiteGrant_UserNotFound(t *testing.T) {
 	users := newSiteTestUsers(map[string]string{})
 	s := newSiteBuilder(newSiteTestClient(t, users))
 
-	_, err := s.Grant(context.Background(), testUserPrincipal("ghost"), testSiteEntitlement(viewer))
+	grants, _, err := s.Grant(context.Background(), testUserPrincipal("ghost"), testSiteEntitlement(viewer))
 	require.Error(t, err)
+	require.Empty(t, grants)
 	require.Equal(t, codes.NotFound, status.Code(err))
 	require.Empty(t, users.recordedPuts())
 }
@@ -267,8 +282,9 @@ func TestSite_GrantThenRevokeSameClient(t *testing.T) {
 	s := newSiteBuilder(newSiteTestClient(t, users))
 	ctx := context.Background()
 
-	annos, err := s.Grant(ctx, testUserPrincipal("user-1"), testSiteEntitlement(creator))
+	grants, annos, err := s.Grant(ctx, testUserPrincipal("user-1"), testSiteEntitlement(creator))
 	require.NoError(t, err)
+	requireSiteWriteGrant(t, grants, creator, "user-1")
 	require.False(t, annos.Contains(&v2.GrantAlreadyExists{}))
 	require.Equal(t, []recordedPut{{userID: "user-1", siteRole: creator}}, users.recordedPuts())
 
@@ -290,15 +306,17 @@ func TestSite_RoleChangedBetweenGrants(t *testing.T) {
 	s := newSiteBuilder(newSiteTestClient(t, users))
 	ctx := context.Background()
 
-	annos, err := s.Grant(ctx, testUserPrincipal("user-1"), testSiteEntitlement(viewer))
+	grants, annos, err := s.Grant(ctx, testUserPrincipal("user-1"), testSiteEntitlement(viewer))
 	require.NoError(t, err)
+	require.Empty(t, grants)
 	require.True(t, annos.Contains(&v2.GrantAlreadyExists{}))
 	require.Empty(t, users.recordedPuts())
 
 	users.set("user-1", creator)
 
-	annos, err = s.Grant(ctx, testUserPrincipal("user-1"), testSiteEntitlement(viewer))
+	grants, annos, err = s.Grant(ctx, testUserPrincipal("user-1"), testSiteEntitlement(viewer))
 	require.NoError(t, err)
+	requireSiteWriteGrant(t, grants, viewer, "user-1")
 	require.False(t, annos.Contains(&v2.GrantAlreadyExists{}), "grant must see the externally changed role")
 	require.Equal(t, []recordedPut{{userID: "user-1", siteRole: viewer}}, users.recordedPuts())
 
@@ -318,7 +336,7 @@ func TestSite_RoleChangedBetweenGrantAndRevoke(t *testing.T) {
 	s := newSiteBuilder(newSiteTestClient(t, users))
 	ctx := context.Background()
 
-	_, err := s.Grant(ctx, testUserPrincipal("user-1"), testSiteEntitlement(creator))
+	_, _, err := s.Grant(ctx, testUserPrincipal("user-1"), testSiteEntitlement(creator))
 	require.NoError(t, err)
 	require.Equal(t, []recordedPut{{userID: "user-1", siteRole: creator}}, users.recordedPuts())
 
@@ -341,7 +359,7 @@ func TestSite_ReadErrorPropagates(t *testing.T) {
 	s := newSiteBuilder(newSiteTestClient(t, users))
 	ctx := context.Background()
 
-	_, err := s.Grant(ctx, testUserPrincipal("user-1"), testSiteEntitlement(creator))
+	_, _, err := s.Grant(ctx, testUserPrincipal("user-1"), testSiteEntitlement(creator))
 	require.Error(t, err)
 	require.NotEqual(t, codes.NotFound, status.Code(err))
 
@@ -361,8 +379,9 @@ func TestSite_WriteErrorPropagates(t *testing.T) {
 	s := newSiteBuilder(newSiteTestClient(t, users))
 	ctx := context.Background()
 
-	annos, err := s.Grant(ctx, testUserPrincipal("user-1"), testSiteEntitlement(creator))
+	grants, annos, err := s.Grant(ctx, testUserPrincipal("user-1"), testSiteEntitlement(creator))
 	require.Error(t, err)
+	require.Empty(t, grants)
 	require.False(t, annos.Contains(&v2.GrantReplaced{}))
 	require.False(t, annos.Contains(&v2.GrantAlreadyExists{}))
 
@@ -381,13 +400,13 @@ func TestSiteGrant_InvalidTargets(t *testing.T) {
 	s := newSiteBuilder(newSiteTestClient(t, users))
 	ctx := context.Background()
 
-	_, err := s.Grant(ctx, testUserPrincipal("user-1"), testSiteEntitlement(serverAdministrator))
+	_, _, err := s.Grant(ctx, testUserPrincipal("user-1"), testSiteEntitlement(serverAdministrator))
 	require.Error(t, err, "ServerAdministrator is not assignable")
 
-	_, err = s.Grant(ctx, testUserPrincipal("user-1"), &v2.Entitlement{Id: "site:site-1:bogus"})
+	_, _, err = s.Grant(ctx, testUserPrincipal("user-1"), &v2.Entitlement{Id: "site:site-1:bogus"})
 	require.Error(t, err, "unknown role slug")
 
-	_, err = s.Grant(ctx, testUserPrincipal("user-1"), &v2.Entitlement{Id: "malformed"})
+	_, _, err = s.Grant(ctx, testUserPrincipal("user-1"), &v2.Entitlement{Id: "malformed"})
 	require.Error(t, err, "malformed entitlement ID")
 
 	_, err = s.Revoke(ctx, &v2.Grant{Entitlement: &v2.Entitlement{Id: "site:site-1:bogus"}, Principal: testUserPrincipal("user-1")})
@@ -408,7 +427,7 @@ func TestSite_InvalidRoleIsInvalidArgument(t *testing.T) {
 	ctx := context.Background()
 
 	for _, entID := range []string{"site:site-1:bogus", "malformed"} {
-		_, err := s.Grant(ctx, testUserPrincipal("user-1"), &v2.Entitlement{Id: entID})
+		_, _, err := s.Grant(ctx, testUserPrincipal("user-1"), &v2.Entitlement{Id: entID})
 		require.Equal(t, codes.InvalidArgument, status.Code(err), "grant %q", entID)
 
 		_, err = s.Revoke(ctx, &v2.Grant{Entitlement: &v2.Entitlement{Id: entID}, Principal: testUserPrincipal("user-1")})
@@ -427,8 +446,9 @@ func TestSiteGrant_ReplaceUnknownPriorRole(t *testing.T) {
 	users := newSiteTestUsers(map[string]string{"user-1": "SomeFutureRole"})
 	s := newSiteBuilder(newSiteTestClient(t, users))
 
-	annos, err := s.Grant(context.Background(), testUserPrincipal("user-1"), testSiteEntitlement(viewer))
+	grants, annos, err := s.Grant(context.Background(), testUserPrincipal("user-1"), testSiteEntitlement(viewer))
 	require.NoError(t, err)
+	requireSiteWriteGrant(t, grants, viewer, "user-1")
 	require.Equal(t, []recordedPut{{userID: "user-1", siteRole: viewer}}, users.recordedPuts())
 	require.False(t, annos.Contains(&v2.GrantReplaced{}))
 }
@@ -458,14 +478,16 @@ func TestSiteGrant_ExactRoleNoHierarchy(t *testing.T) {
 			users := newSiteTestUsers(map[string]string{"user-1": tc.held})
 			s := newSiteBuilder(newSiteTestClient(t, users))
 
-			annos, err := s.Grant(context.Background(), testUserPrincipal("user-1"), testSiteEntitlement(tc.target))
+			grants, annos, err := s.Grant(context.Background(), testUserPrincipal("user-1"), testSiteEntitlement(tc.target))
 			require.NoError(t, err)
 			if !tc.wantPut {
+				require.Empty(t, grants)
 				require.Empty(t, users.recordedPuts())
 				require.True(t, annos.Contains(&v2.GrantAlreadyExists{}))
 				require.False(t, annos.Contains(&v2.GrantReplaced{}))
 				return
 			}
+			requireSiteWriteGrant(t, grants, tc.target, "user-1")
 			require.Equal(t, []recordedPut{{userID: "user-1", siteRole: tc.target}}, users.recordedPuts())
 			require.False(t, annos.Contains(&v2.GrantAlreadyExists{}))
 			replaced := &v2.GrantReplaced{}
@@ -490,8 +512,9 @@ func TestSiteGrant_ServerAdministratorProtected(t *testing.T) {
 			users := newSiteTestUsers(map[string]string{"user-1": serverAdministrator})
 			s := newSiteBuilder(newSiteTestClient(t, users))
 
-			annos, err := s.Grant(context.Background(), testUserPrincipal("user-1"), testSiteEntitlement(target))
+			grants, annos, err := s.Grant(context.Background(), testUserPrincipal("user-1"), testSiteEntitlement(target))
 			require.Error(t, err)
+			require.Empty(t, grants)
 			require.Equal(t, codes.FailedPrecondition, status.Code(err))
 			require.Empty(t, users.recordedPuts(), "a ServerAdministrator must not be written")
 			require.False(t, annos.Contains(&v2.GrantAlreadyExists{}))
@@ -555,12 +578,12 @@ func TestSite_ServerAdministratorChangedBetweenCalls(t *testing.T) {
 	s := newSiteBuilder(newSiteTestClient(t, users))
 	ctx := context.Background()
 
-	_, err := s.Grant(ctx, testUserPrincipal("user-1"), testSiteEntitlement(viewer))
+	_, _, err := s.Grant(ctx, testUserPrincipal("user-1"), testSiteEntitlement(viewer))
 	require.NoError(t, err)
 
 	users.set("user-1", serverAdministrator)
 
-	_, err = s.Grant(ctx, testUserPrincipal("user-1"), testSiteEntitlement(creator))
+	_, _, err = s.Grant(ctx, testUserPrincipal("user-1"), testSiteEntitlement(creator))
 	require.Equal(t, codes.FailedPrecondition, status.Code(err))
 	require.Empty(t, users.recordedPuts())
 }
@@ -633,8 +656,9 @@ func TestSite_SelfLockoutGuard(t *testing.T) {
 		users := newSiteTestUsers(map[string]string{testSelfUserID: siteAdministrator})
 		s := newSiteBuilder(newSiteTestClient(t, users))
 
-		_, err := s.Grant(ctx, testUserPrincipal(testSelfUserID), testSiteEntitlement(viewer))
+		grants, _, err := s.Grant(ctx, testUserPrincipal(testSelfUserID), testSiteEntitlement(viewer))
 		require.Equal(t, codes.FailedPrecondition, status.Code(err))
+		require.Empty(t, grants)
 		require.Empty(t, users.recordedPuts())
 	})
 
@@ -644,8 +668,9 @@ func TestSite_SelfLockoutGuard(t *testing.T) {
 		users := newSiteTestUsers(map[string]string{testSelfUserID: siteAdministrator})
 		s := newSiteBuilder(newSiteTestClient(t, users))
 
-		annos, err := s.Grant(ctx, testUserPrincipal(testSelfUserID), testSiteEntitlement(siteAdministrator))
+		grants, annos, err := s.Grant(ctx, testUserPrincipal(testSelfUserID), testSiteEntitlement(siteAdministrator))
 		require.NoError(t, err)
+		require.Empty(t, grants)
 		require.True(t, annos.Contains(&v2.GrantAlreadyExists{}))
 		require.Empty(t, users.recordedPuts())
 	})
@@ -679,8 +704,9 @@ func TestSite_SelfLockoutGuard(t *testing.T) {
 		users := newSiteTestUsers(map[string]string{"user-1": viewer})
 		s := newSiteBuilder(newSiteTestClient(t, users))
 
-		_, err := s.Grant(ctx, testUserPrincipal("user-1"), testSiteEntitlement(creator))
+		grants, _, err := s.Grant(ctx, testUserPrincipal("user-1"), testSiteEntitlement(creator))
 		require.NoError(t, err)
+		requireSiteWriteGrant(t, grants, creator, "user-1")
 		require.Equal(t, []recordedPut{{userID: "user-1", siteRole: creator}}, users.recordedPuts())
 	})
 }

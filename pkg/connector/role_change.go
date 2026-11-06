@@ -33,6 +33,9 @@ type roleChange struct {
 	// replacedGrantID returns the grant ID that a write displaces when the
 	// previous site role is known. Unused by revoke.
 	replacedGrantID func(siteRole string) (string, bool)
+	// newGrant builds the grant a successful write creates, shaped like the one
+	// sync emits for the same user. Unused by revoke.
+	newGrant func() *v2.Grant
 }
 
 // errSelfLockout refuses a write that would change the role of the user the
@@ -55,43 +58,44 @@ func (rc *roleChange) isSelf() bool {
 //   - the signed-in user, or a role refuseGrant rejects: FailedPrecondition, no write.
 //   - otherwise: write, reporting GrantReplaced when the previous role is known.
 //
-// Rate-limit annotations from the read are merged into every result.
-func (rc *roleChange) grantRole(ctx context.Context, role string) (annotations.Annotations, error) {
+// Rate-limit annotations from the read are merged into every result. Only a
+// write returns a grant (newGrant); every other path returns nil.
+func (rc *roleChange) grantRole(ctx context.Context, role string) ([]*v2.Grant, annotations.Annotations, error) {
 	log := ctxzap.Extract(ctx)
 
 	user, getAnnos, err := rc.client.GetUser(ctx, rc.userID)
 	if err != nil {
 		if client.IsNotFoundError(err) {
-			return getAnnos, fmt.Errorf("%s: cannot grant %s: user %s not found: %w", rc.label, rc.subject, rc.userID, err)
+			return nil, getAnnos, fmt.Errorf("%s: cannot grant %s: user %s not found: %w", rc.label, rc.subject, rc.userID, err)
 		}
-		return getAnnos, fmt.Errorf("failed to read user %s for %s grant: %w", rc.userID, rc.label, err)
+		return nil, getAnnos, fmt.Errorf("failed to read user %s for %s grant: %w", rc.userID, rc.label, err)
 	}
 
 	if rc.holds(user.SiteRole) {
 		log.Debug(rc.label+" grant: user already holds it, no write needed",
 			zap.String("user_id", rc.userID), zap.String("site_role", user.SiteRole))
-		return mergeAnnotations(getAnnos, annotations.New(&v2.GrantAlreadyExists{})), nil
+		return nil, mergeAnnotations(getAnnos, annotations.New(&v2.GrantAlreadyExists{})), nil
 	}
 
 	if rc.isSelf() {
-		return getAnnos, rc.errSelfLockout("grant")
+		return nil, getAnnos, rc.errSelfLockout("grant")
 	}
 
 	if refusal := rc.refuseGrant(user.SiteRole); refusal != nil {
-		return getAnnos, refusal
+		return nil, getAnnos, refusal
 	}
 
 	putAnnos, err := rc.client.UpdateUserSiteRole(ctx, rc.userID, role)
 	annos := mergeAnnotations(getAnnos, putAnnos)
 	if err != nil {
-		return annos, fmt.Errorf("failed to grant %s %s to user %s: %w", rc.subject, rc.label, rc.userID, err)
+		return nil, annos, fmt.Errorf("failed to grant %s %s to user %s: %w", rc.subject, rc.label, rc.userID, err)
 	}
 
 	if replacedID, known := rc.replacedGrantID(user.SiteRole); known {
 		annos.Append(&v2.GrantReplaced{ReplacedGrantId: replacedID})
 	}
 
-	return annos, nil
+	return []*v2.Grant{rc.newGrant()}, annos, nil
 }
 
 // revokeRole sets the user to Unlicensed, but only while they still hold the

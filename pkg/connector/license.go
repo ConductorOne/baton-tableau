@@ -9,6 +9,7 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
+	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	ent "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
@@ -273,11 +274,12 @@ func (l *licenseBuilder) Grants(ctx context.Context, resource *v2.Resource, opts
 // Grant sets the user's site role to the tier's base role: GrantAlreadyExists
 // when the role is already in the tier, FailedPrecondition for an admin role,
 // else a write that reports GrantReplaced when the previous role belonged to a
-// known tier. See roleChange.grantRole.
-func (l *licenseBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
+// known tier. A write returns the new grant, built like Grants() emits it; every
+// other path returns none. See roleChange.grantRole.
+func (l *licenseBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) ([]*v2.Grant, annotations.Annotations, error) {
 	targetTier, ok := licensesMap[entitlement.Resource.Id.Resource]
 	if !ok {
-		return nil, status.Errorf(codes.InvalidArgument, "unknown license %s", entitlement.Resource.Id.Resource)
+		return nil, nil, status.Errorf(codes.InvalidArgument, "unknown license %s", entitlement.Resource.Id.Resource)
 	}
 
 	rc := l.roleChange(principal.Id.Resource, targetTier)
@@ -301,6 +303,10 @@ func (l *licenseBuilder) Grant(ctx context.Context, principal *v2.Resource, enti
 			},
 		}
 		return grant.NewGrantID(principal.Id, ent.NewAssignmentEntitlement(oldResource, memberEntitlement)), true
+	}
+
+	rc.newGrant = func() *v2.Grant {
+		return grant.NewGrant(entitlement.Resource, memberEntitlement, principal.Id)
 	}
 
 	return rc.grantRole(ctx, targetTier)
@@ -328,6 +334,8 @@ func (l *licenseBuilder) roleChange(userID, tier string) *roleChange {
 		holds:   func(siteRole string) bool { return slices.Contains(RolesPerLicense[tier], siteRole) },
 	}
 }
+
+var _ connectorbuilder.ResourceProvisionerV2 = (*licenseBuilder)(nil)
 
 func newLicenseBuilder(client *client.Client) *licenseBuilder {
 	return &licenseBuilder{
