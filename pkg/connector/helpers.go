@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -13,6 +14,7 @@ import (
 	"github.com/conductorone/baton-tableau/pkg/client"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/anypb"
 )
 
 const (
@@ -208,9 +210,23 @@ func isAlreadyExistsError(err error) bool {
 	return status.Code(err) == codes.AlreadyExists
 }
 
-// isNotFoundError returns true if the error indicates the resource was not found (HTTP 404).
-func isNotFoundError(err error) bool {
-	return status.Code(err) == codes.NotFound
+// mergeAnnotations concatenates annotation sets in order. When the same
+// message type appears more than once (e.g. a RateLimitDescription from each
+// of several API calls), the most recent one wins so a result carries at most
+// one entry per type.
+func mergeAnnotations(sets ...annotations.Annotations) annotations.Annotations {
+	var merged annotations.Annotations
+	for _, set := range sets {
+		for _, a := range set {
+			idx := slices.IndexFunc(merged, func(m *anypb.Any) bool { return m.GetTypeUrl() == a.GetTypeUrl() })
+			if idx >= 0 {
+				merged[idx] = a
+				continue
+			}
+			merged = append(merged, a)
+		}
+	}
+	return merged
 }
 
 // permissionFunc is the signature shared by all Add/Delete permission client methods.
@@ -297,7 +313,7 @@ func revokePermission(
 	}
 
 	if err != nil {
-		if isNotFoundError(err) {
+		if client.IsNotFoundError(err) {
 			return annotations.New(&v2.GrantAlreadyRevoked{}), nil
 		}
 		return annos, fmt.Errorf("failed to revoke permission: %w", err)
