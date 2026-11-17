@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -811,6 +812,8 @@ func (c *licenseOnlyConnector) ResourceSyncers(_ context.Context) []connectorbui
 type inProcessClient struct {
 	types.ConnectorClient
 	server types.ConnectorServer
+
+	listEntitlementsCalls atomic.Int32
 }
 
 func (c *inProcessClient) GetMetadata(ctx context.Context, in *v2.ConnectorServiceGetMetadataRequest, _ ...grpc.CallOption) (*v2.ConnectorServiceGetMetadataResponse, error) {
@@ -840,6 +843,7 @@ func (c *inProcessClient) ListStaticEntitlements(
 }
 
 func (c *inProcessClient) ListEntitlements(ctx context.Context, in *v2.EntitlementsServiceListEntitlementsRequest, _ ...grpc.CallOption) (*v2.EntitlementsServiceListEntitlementsResponse, error) {
+	c.listEntitlementsCalls.Add(1)
 	return c.server.ListEntitlements(ctx, in)
 }
 
@@ -850,7 +854,8 @@ func (c *inProcessClient) ListGrants(ctx context.Context, in *v2.GrantsServiceLi
 // TestLicenseSync_TierEntitlementsShareExclusionGroup runs a real SDK sync and
 // reads the stored entitlements back, so it covers how the SDK stamps the
 // static member entitlement onto each tier: one shared, unscoped group with no
-// default or order, and entitlement IDs unchanged.
+// default or order, and entitlement IDs unchanged. SkipEntitlements must stop
+// only the per-tier Entitlements calls, not the static materialization.
 func TestLicenseSync_TierEntitlementsShareExclusionGroup(t *testing.T) {
 	ctx := context.Background()
 
@@ -863,10 +868,12 @@ func TestLicenseSync_TierEntitlementsShareExclusionGroup(t *testing.T) {
 	require.NoError(t, err)
 
 	c1zPath := filepath.Join(t.TempDir(), "sync.c1z")
-	syncer, err := sdksync.NewSyncer(ctx, &inProcessClient{server: server}, sdksync.WithC1ZPath(c1zPath), sdksync.WithTmpDir(t.TempDir()))
+	connectorClient := &inProcessClient{server: server}
+	syncer, err := sdksync.NewSyncer(ctx, connectorClient, sdksync.WithC1ZPath(c1zPath), sdksync.WithTmpDir(t.TempDir()))
 	require.NoError(t, err)
 	require.NoError(t, syncer.Sync(ctx))
 	require.NoError(t, syncer.Close(ctx))
+	require.Zero(t, connectorClient.listEntitlementsCalls.Load(), "license tiers must not get per-resource Entitlements calls")
 
 	store, err := dotc1z.NewStore(ctx, c1zPath, dotc1z.WithReadOnly(true))
 	require.NoError(t, err)

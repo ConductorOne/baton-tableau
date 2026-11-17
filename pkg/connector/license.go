@@ -206,6 +206,8 @@ func (l *licenseBuilder) countConsumedByTier(ctx context.Context, site *client.S
 	return consumed, nil
 }
 
+// Entitlements is intentionally a no-op: the static template provides the tier
+// entitlements, and the resource type's SkipEntitlements keeps the SDK from calling this.
 func (l *licenseBuilder) Entitlements(_ context.Context, _ *v2.Resource, _ rs.SyncOpAttrs) ([]*v2.Entitlement, *rs.SyncOpResults, error) {
 	return nil, nil, nil
 }
@@ -330,7 +332,10 @@ func (l *licenseBuilder) roleChange(userID, tier string) *roleChange {
 	}
 }
 
-var _ connectorbuilder.ResourceProvisionerV2 = (*licenseBuilder)(nil)
+var (
+	_ connectorbuilder.ResourceProvisionerV2     = (*licenseBuilder)(nil)
+	_ connectorbuilder.StaticEntitlementSyncerV2 = (*licenseBuilder)(nil)
+)
 
 func newLicenseBuilder(client *client.Client) *licenseBuilder {
 	return &licenseBuilder{
