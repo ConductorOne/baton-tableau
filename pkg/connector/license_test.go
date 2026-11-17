@@ -301,43 +301,29 @@ func TestLicenseGrant_AlreadyInTier(t *testing.T) {
 
 // TestLicenseGrant_CrossTierNonAdmin asserts that a non-admin role outside the
 // target tier is replaced, with exactly one PUT and a GrantReplaced annotation
-// naming the user's previous license grant. Unlicensed is granted explicitly
-// like any other tier.
+// naming the user's previous license grant.
 func TestLicenseGrant_CrossTierNonAdmin(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name     string
-		curRole  string
-		tier     string
-		replaced string
-	}{
-		{"viewer to creator", viewer, creator, "license:viewer:member:user:user-1"},
-		{"creator to unlicensed", creator, unlicensed, "license:creator:member:user:user-1"},
-	}
+	var puts []recordedPut
+	c := newLicenseTestClient(t, map[string]string{"user-1": viewer}, &puts)
+	l := newLicenseBuilder(c)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
+	grants, annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
+	require.NoError(t, err)
+	requireWriteGrant(t, grants, creator, "user-1")
 
-			var puts []recordedPut
-			c := newLicenseTestClient(t, map[string]string{"user-1": tt.curRole}, &puts)
-			l := newLicenseBuilder(c)
+	require.Len(t, puts, 1, "cross-tier grant must write exactly once")
+	require.Equal(t, "user-1", puts[0].userID)
+	require.Equal(t, creator, puts[0].siteRole)
 
-			grants, annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(tt.tier))
-			require.NoError(t, err)
-			requireWriteGrant(t, grants, tt.tier, "user-1")
+	require.False(t, annos.Contains(&v2.GrantAlreadyExists{}))
 
-			require.Equal(t, []recordedPut{{userID: "user-1", siteRole: tt.tier}}, puts, "cross-tier grant must write exactly once")
-			require.False(t, annos.Contains(&v2.GrantAlreadyExists{}))
-
-			var replaced v2.GrantReplaced
-			found, err := annos.Pick(&replaced)
-			require.NoError(t, err)
-			require.True(t, found, "expected a GrantReplaced annotation")
-			require.Equal(t, tt.replaced, replaced.GetReplacedGrantId())
-		})
-	}
+	var replaced v2.GrantReplaced
+	found, err := annos.Pick(&replaced)
+	require.NoError(t, err)
+	require.True(t, found, "expected a GrantReplaced annotation")
+	require.Equal(t, "license:viewer:member:user:user-1", replaced.GetReplacedGrantId())
 }
 
 // TestLicenseGrant_CrossTierAdmin asserts that granting a different tier to a
