@@ -1,0 +1,138 @@
+package client
+
+import (
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"time"
+)
+
+// Tableau connected apps sign their JWTs with HS256 and nothing else, and the
+// signature covers only the two base64url segments. Reaching for a JWT library
+// to emit thirty bytes of HMAC would pull a dependency into the module graph
+// for a code path that never verifies a token, so the encoder lives here.
+
+// jwtLifetime is how long a generated assertion stays valid. Tableau rejects
+// anything beyond ten minutes; the remainder is headroom for clock skew
+// between this connector and Tableau Cloud.
+const jwtLifetime = 5 * time.Minute
+
+// connectedAppScopes are the access scopes requested when signing in with a
+// connected app. For direct trust this claim is the only scope control there
+// is: the app itself carries no scope list, and its access level and domain
+// allowlist govern embedding rather than the REST API. The list must therefore
+// cover every endpoint this package calls, and no more. A leaked session is
+// bounded by this claim, so each entry has to earn its place.
+//
+// The list deliberately omits tableau:projects:* and tableau:workbooks:*. This
+// package never creates, updates, moves, publishes, downloads or deletes a
+// project or a workbook: it only reads them, which tableau:content:read covers,
+// and changes their permissions, which the permission scopes cover. Those two
+// wildcards would add project deletion and workbook publishing to the blast
+// radius for no gain.
+//
+// Permission reads need their own scope. Grant sync enumerates project,
+// workbook, and view ACLs on every run, and Tableau gates those GETs behind
+// tableau:permissions:read rather than tableau:content:read — omit it and
+// sign-in succeeds while the first site with content fails mid-sync.
+//
+// The user and group scopes stay as wildcards because Tableau documents no
+// granular alternative that covers what provisioning does. It publishes
+// tableau:users:create and tableau:users:delete but nothing for the site role
+// update the licence path performs, and nothing granular for groups at all.
+//
+// Tableau publishes no scope covering /site-auth-configurations. A connected
+// app session is refused there with 401 401002 where a personal access token
+// succeeds, so the account-creation path treats that refusal as discovery
+// being unavailable — but only for a connected app — and falls back to the
+// site default.
+var connectedAppScopes = []string{
+	"tableau:content:read",
+	"tableau:sites:read",
+	"tableau:users:*",
+	"tableau:groups:*",
+	"tableau:permissions:read",
+	"tableau:permissions:update",
+	"tableau:permissions:delete",
+}
+
+// ConnectedApp holds the direct trust credentials for a Tableau connected app.
+// Username is the email address of the Tableau user the connector acts as; it
+// needs the same site administrator rights a personal access token owner does.
+type ConnectedApp struct {
+	ClientID    string
+	SecretID    string
+	SecretValue string
+	Username    string
+}
+
+// newConnectedAppJWT signs a direct trust assertion for the given connected
+// app. Tableau expects the issuer and secret identifier in the header rather
+// than the claim set, and repeats the issuer as a claim.
+func newConnectedAppJWT(app ConnectedApp, now time.Time) (string, error) {
+	header := map[string]any{
+		"alg": "HS256",
+		"typ": "JWT",
+		"kid": app.SecretID,
+		"iss": app.ClientID,
+	}
+
+	jti, err := newJWTID()
+	if err != nil {
+		return "", err
+	}
+
+	claims := map[string]any{
+		"iss": app.ClientID,
+		"sub": app.Username,
+		"aud": "tableau",
+		"jti": jti,
+		"exp": now.Add(jwtLifetime).Unix(),
+		"scp": connectedAppScopes,
+	}
+
+	headerSegment, err := encodeJWTSegment(header)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode JWT header: %w", err)
+	}
+
+	claimsSegment, err := encodeJWTSegment(claims)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode JWT claims: %w", err)
+	}
+
+	signingInput := headerSegment + "." + claimsSegment
+
+	mac := hmac.New(sha256.New, []byte(app.SecretValue))
+	if _, err := mac.Write([]byte(signingInput)); err != nil {
+		return "", fmt.Errorf("failed to sign JWT: %w", err)
+	}
+
+	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+
+	return signingInput + "." + signature, nil
+}
+
+// newJWTID returns a unique value for the jti claim. Tableau rejects replayed
+// identifiers, so this must differ on every sign-in.
+func newJWTID() (string, error) {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("failed to generate JWT ID: %w", err)
+	}
+
+	return hex.EncodeToString(buf), nil
+}
+
+func encodeJWTSegment(v any) (string, error) {
+	encoded, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+
+	return base64.RawURLEncoding.EncodeToString(encoded), nil
+}
