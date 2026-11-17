@@ -590,7 +590,8 @@ func TestSite_ServerAdministratorChangedBetweenCalls(t *testing.T) {
 
 // TestSiteEntitlements_ExclusionGroup asserts every Site Role entitlement carries
 // an exclusion group scoped to its site: one group within a site, distinct groups
-// across sites, no default or order on any role, with entitlement IDs unchanged.
+// across sites, exactly one default (Unlicensed, order 0) per site, with
+// entitlement and grant IDs unchanged.
 func TestSiteEntitlements_ExclusionGroup(t *testing.T) {
 	t.Parallel()
 
@@ -608,12 +609,16 @@ func TestSiteEntitlements_ExclusionGroup(t *testing.T) {
 		return eg
 	}
 	groupOf := func(e *v2.Entitlement) string { return exclusionOf(e).GetExclusionGroupId() }
-	requireNoDefault := func(ents []*v2.Entitlement) {
+	requireOneDefault := func(ents []*v2.Entitlement, site *v2.Resource) {
+		var defaults []string
 		for _, e := range ents {
 			eg := exclusionOf(e)
-			require.False(t, eg.GetIsDefault(), "entitlement %s must not be the group default", e.GetId())
-			require.Zero(t, eg.GetOrder(), "entitlement %s must not be ranked", e.GetId())
+			require.Zero(t, eg.GetOrder())
+			if eg.GetIsDefault() {
+				defaults = append(defaults, e.GetId())
+			}
 		}
+		require.Equal(t, []string{ent.NewEntitlementID(site, roles[unlicensed])}, defaults, "Unlicensed must be the only default")
 	}
 
 	entsA, _, err := s.Entitlements(context.Background(), testSiteResource(), rs.SyncOpAttrs{})
@@ -633,8 +638,8 @@ func TestSiteEntitlements_ExclusionGroup(t *testing.T) {
 	for _, e := range entsB {
 		require.Equal(t, groupB, groupOf(e))
 	}
-	requireNoDefault(entsA)
-	requireNoDefault(entsB)
+	requireOneDefault(entsA, testSiteResource())
+	requireOneDefault(entsB, siteB)
 }
 
 // TestSite_SelfLockoutGuard asserts that a Grant or Revoke that would write a
