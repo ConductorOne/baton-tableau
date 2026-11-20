@@ -22,6 +22,11 @@
         "traits": [
           "TRAIT_ROLE",
           "TRAIT_LICENSE_PROFILE"
+        ],
+        "annotations": [
+          {
+            "@type": "type.googleapis.com/c1.connector.v2.SkipEntitlements"
+          }
         ]
       },
       "capabilities": [

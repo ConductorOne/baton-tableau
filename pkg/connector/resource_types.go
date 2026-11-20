@@ -32,6 +32,9 @@ var (
 			v2.ResourceType_TRAIT_ROLE,
 			v2.ResourceType_TRAIT_LICENSE_PROFILE,
 		},
+		// Tier entitlements come from licenseBuilder.StaticEntitlements, which the
+		// SDK still materializes; this only skips the per-tier Entitlements calls.
+		Annotations: annotations.New(&v2.SkipEntitlements{}),
 	}
 	resourceTypeProject = &v2.ResourceType{
 		Id:          "project",

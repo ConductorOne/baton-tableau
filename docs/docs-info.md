@@ -119,7 +119,7 @@
 - **Description**: The Tableau site the connector is authenticated against. Acts as the top-level resource in the hierarchy.
 - **Children**: Users, Groups, Projects
 - **Entitlements**: Site roles per [Tableau REST API Site Roles](https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_new_site_roles.htm)
-- **Exclusion group**: all site-role entitlements of a site share group `site-role:<site id>`; `Unlicensed` is the default (`WithExclusionGroupDefault`, order 0), so it is the only default in the group. The connector syncs one site (`List()` returns only `GetSite`).
+- **Exclusion group**: all site-role entitlements of a site share group `site-role:<site id>`, with no default or order. The connector syncs one site (`List()` returns only `GetSite`).
 - **Provisioning** (shared helper `roleChange` in `pkg/connector/role_change.go`, also used by License Grant/Revoke; the read is always uncached):
   - Grant: sets exactly the entitlement's role.
     - Missing user: `NotFound` (wrapped error, `status.Code` stays `NotFound`).
@@ -127,7 +127,7 @@
     - Signed-in user (`Client.AuthenticatedUserID()`, the `Login` user): `FailedPrecondition`, no write.
     - User holds `ServerAdministrator`: `FailedPrecondition`, no write (the connector cannot restore it; a server administrator has to restore it in Tableau).
     - Otherwise: PUT, plus `GrantReplaced` for the previous site-role grant when the previous role is a known role. `SiteAdministrator*` roles are replaced (the explicit way to change them).
-  - Revoke: sets the user to `Unlicensed` only while they still hold the revoked role, including a held `SiteAdministrator*` or `ServerAdministrator`.
+  - Revoke: sets the user to `Unlicensed` only while they still hold the revoked role, including a held `SiteAdministrator*` or `ServerAdministrator`. The `Unlicensed` grant may only appear in C1 after a later sync.
     - Missing user, a different current role, or an already `Unlicensed` user: no write, `GrantAlreadyRevoked`.
     - Signed-in user: `FailedPrecondition`, no write. No-op outcomes are checked first and stay no-ops.
   - Rate-limit annotations from the read are merged into every result, including failures.
@@ -197,7 +197,7 @@
   - `Viewer` — View and interact with published dashboards
   - `Unlicensed` — No access to Tableau site features
 - **Entitlements**:
-  - `member` (`license:<tier>:member`) — License is assigned to user; all four tiers share exclusion group `tableau-license` (unscoped). It is emitted from `Entitlements()` per tier, not as a static entitlement, because one static template would mark all four tiers as default and fail sync invariant I5 ("multiple default entitlements"). `Unlicensed` is the only default (`WithExclusionGroupDefault`, order 0): the fallback when another tier is revoked.
+  - `member` (`license:<tier>:member`) — License is assigned to user; static entitlement; all four tiers share exclusion group `tableau-license` (unscoped, no default or order).
 - **Seat counts** (License Profile trait):
   - **Purchased** — read from the site's per-tier capacity fields (`tierCreatorCapacity`, `tierExplorerCapacity`, `tierViewerCapacity`), which the Tableau API returns as JSON strings. Attached only when the value is a positive number; a `0` or absent capacity attaches no seats (avoids rendering "0 of 0"). The `Unlicensed` floor tier is never capped.
   - **Consumed** — counted server-side per tier via the users `siteRole` filter, reading `pagination.totalAvailable` (one request per tier instead of walking every user page).
@@ -331,13 +331,15 @@
 - Users with unknown or unexpected site roles (not in the connector's role map) are **skipped** during site grant sync instead of creating malformed grants. A warning is logged.
 - The role map covers all valid [Tableau REST API site roles](https://help.tableau.com/current/api/rest_api/en-us/REST/rest_api_concepts_new_site_roles.htm): `SiteAdministratorCreator`, `SiteAdministratorExplorer`, `SiteAdministrator`, `Creator`, `Explorer`, `ExplorerCanPublish`, `Viewer`, `Unlicensed`.
 - `ServerAdministrator` is synced (read-only) and consumes a Creator license, but it is never a grant target — the assignable license is Creator, and this connector does not assign the `ServerAdministrator` role itself. Revoking a tier from a Server Administrator leaves the user Unlicensed, and the role has to be restored by a server administrator in Tableau.
+- After upgrading to this build, run a full sync before retesting site-role Revoke in C1. Until that sync replaces the stored `site-role:<site id>` group, C1 can still treat Unlicensed as its default and grant it instead of calling Revoke.
 
 ### License Grants
 
 - The Explorer license includes `SiteAdministrator` (legacy role). This role is not supported by the Tableau API's `siteRole` filter, so the connector falls back to fetching all users and filtering client-side for the Explorer license.
 - For Creator, Viewer, and Unlicensed licenses, server-side filtering is used for efficiency.
 - **Grant** is tier-aware: a user whose site role already belongs to the target tier gets `GrantAlreadyExists` with no write and keeps their role. A different tier for a user holding `SiteAdministrator`, `SiteAdministratorCreator`, `SiteAdministratorExplorer`, or `ServerAdministrator` fails with `FailedPrecondition` (the Site Role entitlement assigns the `SiteAdministrator*` roles; this connector does not assign `ServerAdministrator`). Any other user is set to the tier's base role, with `GrantReplaced` only when the previous role belonged to a recognized tier. A missing user returns `NotFound`.
-- **Revoke** sets a user who still holds the tier to `Unlicensed`, including the four admin roles above. A missing user, or one who no longer holds the tier, returns `GrantAlreadyRevoked` without a write. Revoking the Unlicensed tier from an already Unlicensed user is the same successful no-op; the next sync still shows Unlicensed in C1 because it is the floor role and current state.
+- **Revoke** sets a user who still holds the tier to `Unlicensed`, including the four admin roles above; the `Unlicensed` grant may only appear in C1 after a later sync. A missing user, or one who no longer holds the tier, returns `GrantAlreadyRevoked` without a write. Revoking the Unlicensed tier from an already Unlicensed user is the same successful no-op; the next sync still shows Unlicensed in C1 because it is the floor role and current state.
+- After upgrading to this build, run a full sync before retesting license Revoke in C1. Until that sync replaces the stored `tableau-license` group, C1 can still treat Unlicensed as its default and grant it instead of calling Revoke.
 - Grant and Revoke read the user first without caching and merge the read's rate-limit annotations into every result.
 - Consumed-seat counts reuse the same server-side `siteRole` filter but read only `pagination.totalAvailable` per tier (no full user walk). The Explorer count excludes the unfilterable legacy `SiteAdministrator` role, which does not exist on Tableau Cloud.
 

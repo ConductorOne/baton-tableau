@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
@@ -301,29 +302,43 @@ func TestLicenseGrant_AlreadyInTier(t *testing.T) {
 
 // TestLicenseGrant_CrossTierNonAdmin asserts that a non-admin role outside the
 // target tier is replaced, with exactly one PUT and a GrantReplaced annotation
-// naming the user's previous license grant.
+// naming the user's previous license grant. Unlicensed is granted explicitly
+// like any other tier.
 func TestLicenseGrant_CrossTierNonAdmin(t *testing.T) {
 	t.Parallel()
 
-	var puts []recordedPut
-	c := newLicenseTestClient(t, map[string]string{"user-1": viewer}, &puts)
-	l := newLicenseBuilder(c)
+	tests := []struct {
+		name     string
+		curRole  string
+		tier     string
+		replaced string
+	}{
+		{"viewer to creator", viewer, creator, "license:viewer:member:user:user-1"},
+		{"creator to unlicensed", creator, unlicensed, "license:creator:member:user:user-1"},
+	}
 
-	grants, annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(creator))
-	require.NoError(t, err)
-	requireWriteGrant(t, grants, creator, "user-1")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	require.Len(t, puts, 1, "cross-tier grant must write exactly once")
-	require.Equal(t, "user-1", puts[0].userID)
-	require.Equal(t, creator, puts[0].siteRole)
+			var puts []recordedPut
+			c := newLicenseTestClient(t, map[string]string{"user-1": tt.curRole}, &puts)
+			l := newLicenseBuilder(c)
 
-	require.False(t, annos.Contains(&v2.GrantAlreadyExists{}))
+			grants, annos, err := l.Grant(context.Background(), testUserPrincipal("user-1"), testLicenseEntitlement(tt.tier))
+			require.NoError(t, err)
+			requireWriteGrant(t, grants, tt.tier, "user-1")
 
-	var replaced v2.GrantReplaced
-	found, err := annos.Pick(&replaced)
-	require.NoError(t, err)
-	require.True(t, found, "expected a GrantReplaced annotation")
-	require.Equal(t, "license:viewer:member:user:user-1", replaced.GetReplacedGrantId())
+			require.Equal(t, []recordedPut{{userID: "user-1", siteRole: tt.tier}}, puts, "cross-tier grant must write exactly once")
+			require.False(t, annos.Contains(&v2.GrantAlreadyExists{}))
+
+			var replaced v2.GrantReplaced
+			found, err := annos.Pick(&replaced)
+			require.NoError(t, err)
+			require.True(t, found, "expected a GrantReplaced annotation")
+			require.Equal(t, tt.replaced, replaced.GetReplacedGrantId())
+		})
+	}
 }
 
 // TestLicenseGrant_CrossTierAdmin asserts that granting a different tier to a
@@ -797,6 +812,8 @@ func (c *licenseOnlyConnector) ResourceSyncers(_ context.Context) []connectorbui
 type inProcessClient struct {
 	types.ConnectorClient
 	server types.ConnectorServer
+
+	listEntitlementsCalls atomic.Int32
 }
 
 func (c *inProcessClient) GetMetadata(ctx context.Context, in *v2.ConnectorServiceGetMetadataRequest, _ ...grpc.CallOption) (*v2.ConnectorServiceGetMetadataResponse, error) {
@@ -826,6 +843,7 @@ func (c *inProcessClient) ListStaticEntitlements(
 }
 
 func (c *inProcessClient) ListEntitlements(ctx context.Context, in *v2.EntitlementsServiceListEntitlementsRequest, _ ...grpc.CallOption) (*v2.EntitlementsServiceListEntitlementsResponse, error) {
+	c.listEntitlementsCalls.Add(1)
 	return c.server.ListEntitlements(ctx, in)
 }
 
@@ -835,8 +853,9 @@ func (c *inProcessClient) ListGrants(ctx context.Context, in *v2.GrantsServiceLi
 
 // TestLicenseSync_TierEntitlementsShareExclusionGroup runs a real SDK sync and
 // reads the stored entitlements back, so it covers how the SDK stamps the
-// member entitlement onto each tier: one shared, unscoped group with exactly one
-// default (Unlicensed, order 0), and entitlement IDs unchanged.
+// static member entitlement onto each tier: one shared, unscoped group with no
+// default or order, and entitlement IDs unchanged. SkipEntitlements must stop
+// only the per-tier Entitlements calls, not the static materialization.
 func TestLicenseSync_TierEntitlementsShareExclusionGroup(t *testing.T) {
 	ctx := context.Background()
 
@@ -849,10 +868,12 @@ func TestLicenseSync_TierEntitlementsShareExclusionGroup(t *testing.T) {
 	require.NoError(t, err)
 
 	c1zPath := filepath.Join(t.TempDir(), "sync.c1z")
-	syncer, err := sdksync.NewSyncer(ctx, &inProcessClient{server: server}, sdksync.WithC1ZPath(c1zPath), sdksync.WithTmpDir(t.TempDir()))
+	connectorClient := &inProcessClient{server: server}
+	syncer, err := sdksync.NewSyncer(ctx, connectorClient, sdksync.WithC1ZPath(c1zPath), sdksync.WithTmpDir(t.TempDir()))
 	require.NoError(t, err)
 	require.NoError(t, syncer.Sync(ctx))
 	require.NoError(t, syncer.Close(ctx))
+	require.Zero(t, connectorClient.listEntitlementsCalls.Load(), "license tiers must not get per-resource Entitlements calls")
 
 	store, err := dotc1z.NewStore(ctx, c1zPath, dotc1z.WithReadOnly(true))
 	require.NoError(t, err)
@@ -872,18 +893,14 @@ func TestLicenseSync_TierEntitlementsShareExclusionGroup(t *testing.T) {
 	}
 
 	require.Len(t, got, len(licenses))
-	var defaults []string
 	for _, id := range []string{"license:creator:member", "license:explorer:member", "license:viewer:member", "license:unlicensed:member"} {
 		group, ok := got[id]
 		require.True(t, ok, "missing entitlement ID %s", id)
 		require.Equal(t, "tableau-license", group.GetExclusionGroupId())
 		require.False(t, group.GetScopeToResource(), "group must be shared across tiers, not scoped per resource")
+		require.False(t, group.GetIsDefault(), "no fallback tier is authorized")
 		require.Zero(t, group.GetOrder(), "no privilege order is authorized")
-		if group.GetIsDefault() {
-			defaults = append(defaults, id)
-		}
 	}
-	require.Equal(t, []string{"license:unlicensed:member"}, defaults, "Unlicensed must be the only default")
 }
 
 // TestLicense_SelfLockoutGuard asserts that a license Grant or Revoke that would
