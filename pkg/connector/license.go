@@ -24,8 +24,8 @@ var licenses = []string{creator, explorer, viewer, unlicensed}
 
 // licenseExclusionGroup marks the four tier entitlements as mutually exclusive:
 // a user's single site role puts them in exactly one tier. It is deliberately
-// unscoped, so the SDK shares one group across the tier resources, and sets no
-// default or order, so C1 gets no fallback tier or privilege ranking.
+// unscoped, so the SDK shares one group across the tier resources. Unlicensed is
+// the default (order 0) and no other tier is ranked.
 const licenseExclusionGroup = "tableau-license"
 
 var licensesMap = map[string]string{
@@ -206,19 +206,24 @@ func (l *licenseBuilder) countConsumedByTier(ctx context.Context, site *client.S
 	return consumed, nil
 }
 
-func (l *licenseBuilder) Entitlements(_ context.Context, _ *v2.Resource, _ rs.SyncOpAttrs) ([]*v2.Entitlement, *rs.SyncOpResults, error) {
-	return nil, nil, nil
-}
+// Entitlements declares the single "member" entitlement of a license tier. The
+// four tiers share one exclusion group, and Unlicensed is its default: the
+// fallback when another tier is revoked. This is not a static entitlement,
+// because one static template is copied to every tier and would mark all four
+// as the default.
+func (l *licenseBuilder) Entitlements(_ context.Context, resource *v2.Resource, _ rs.SyncOpAttrs) ([]*v2.Entitlement, *rs.SyncOpResults, error) {
+	group := ent.WithExclusionGroup(licenseExclusionGroup)
+	if resource.Id.Resource == strings.ToLower(unlicensed) {
+		group = ent.WithExclusionGroupDefault(licenseExclusionGroup, 0)
+	}
 
-// StaticEntitlements declares the single "member" entitlement every license tier exposes.
-func (l *licenseBuilder) StaticEntitlements(_ context.Context, _ rs.SyncOpAttrs) ([]*v2.Entitlement, *rs.SyncOpResults, error) {
 	en := ent.NewAssignmentEntitlement(
-		nil,
+		resource,
 		memberEntitlement,
 		ent.WithGrantableTo(resourceTypeUser),
 		ent.WithDisplayName("License member"),
 		ent.WithDescription("Member of License in Tableau"),
-		ent.WithExclusionGroup(licenseExclusionGroup),
+		group,
 	)
 
 	return []*v2.Entitlement{en}, nil, nil
@@ -266,100 +271,68 @@ func (l *licenseBuilder) Grants(ctx context.Context, resource *v2.Resource, opts
 	return rv, &rs.SyncOpResults{NextPageToken: nextToken}, nil
 }
 
-// Grant sets the user's site role to the tier's base role after a fresh read
-// and returns the new grant on a write (nil on every no-op or error path):
-// NotFound for a missing user, GrantAlreadyExists (no write) for a role already
-// in the tier, FailedPrecondition for an admin role, else a write that reports
-// GrantReplaced when the previous role belonged to a known tier.
+// Grant sets the user's site role to the tier's base role: GrantAlreadyExists
+// when the role is already in the tier, FailedPrecondition for an admin role,
+// else a write that reports GrantReplaced when the previous role belonged to a
+// known tier. A write returns the new grant, built like Grants() emits it; every
+// other path returns none. See roleChange.grantRole.
 func (l *licenseBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) ([]*v2.Grant, annotations.Annotations, error) {
-	log := ctxzap.Extract(ctx)
-
 	targetTier, ok := licensesMap[entitlement.Resource.Id.Resource]
 	if !ok {
 		return nil, nil, status.Errorf(codes.InvalidArgument, "unknown license %s", entitlement.Resource.Id.Resource)
 	}
 
-	user, getAnnos, err := l.client.GetUser(ctx, principal.Id.Resource)
-	if err != nil {
-		if client.IsNotFoundError(err) {
-			return nil, getAnnos, fmt.Errorf("license: cannot grant %s: user %s not found: %w", targetTier, principal.Id.Resource, err)
+	rc := l.roleChange(principal.Id.Resource, targetTier)
+	rc.refuseGrant = func(siteRole string) error {
+		if !adminLicenseRoles[siteRole] {
+			return nil
 		}
-		return nil, getAnnos, fmt.Errorf("failed to read user %s for license grant: %w", principal.Id.Resource, err)
-	}
-
-	if slices.Contains(RolesPerLicense[targetTier], user.SiteRole) {
-		log.Debug("license grant: user already in target tier, no write needed",
-			zap.String("user_id", principal.Id.Resource), zap.String("tier", targetTier), zap.String("site_role", user.SiteRole))
-		return nil, mergeAnnotations(getAnnos, annotations.New(&v2.GrantAlreadyExists{})), nil
-	}
-
-	if adminLicenseRoles[user.SiteRole] {
-		return nil, getAnnos, status.Errorf(codes.FailedPrecondition,
+		return status.Errorf(codes.FailedPrecondition,
 			"license: cannot grant %s to user %s: current site role %q is an administrative role; use the Site Role entitlement to change it explicitly",
-			targetTier, principal.Id.Resource, user.SiteRole)
+			targetTier, principal.Id.Resource, siteRole)
 	}
-
-	putAnnos, err := l.client.UpdateUserSiteRole(ctx, principal.Id.Resource, targetTier)
-	annos := mergeAnnotations(getAnnos, putAnnos)
-	if err != nil {
-		return nil, annos, fmt.Errorf("failed to grant %s license to user %s: %w", targetTier, principal.Id.Resource, err)
-	}
-
-	if oldTier, ok := tierForRole(user.SiteRole); ok {
+	rc.replacedGrantID = func(siteRole string) (string, bool) {
+		oldTier, ok := tierForRole(siteRole)
+		if !ok {
+			return "", false
+		}
 		oldResource := &v2.Resource{
 			Id: &v2.ResourceId{
 				ResourceType: resourceTypeLicense.Id,
 				Resource:     strings.ToLower(oldTier),
 			},
 		}
-		oldEntitlement := ent.NewAssignmentEntitlement(oldResource, memberEntitlement)
-		annos.Append(&v2.GrantReplaced{ReplacedGrantId: grant.NewGrantID(principal.Id, oldEntitlement)})
+		return grant.NewGrantID(principal.Id, ent.NewAssignmentEntitlement(oldResource, memberEntitlement)), true
 	}
 
-	// Same shape as Grants() emits, so the grant ID matches the one sync reports.
-	return []*v2.Grant{grant.NewGrant(entitlement.Resource, memberEntitlement, principal.Id)}, annos, nil
+	rc.newGrant = func() *v2.Grant {
+		return grant.NewGrant(entitlement.Resource, memberEntitlement, principal.Id)
+	}
+
+	return rc.grantRole(ctx, targetTier)
 }
 
-// Revoke sets the user's site role to Unlicensed after a fresh read, returning
-// GrantAlreadyRevoked without writing when the user is missing, no longer in the
-// tier, or already Unlicensed.
+// Revoke sets the user's site role to Unlicensed, returning GrantAlreadyRevoked
+// without writing when the user is missing, no longer in the tier, or already
+// Unlicensed. See roleChange.revokeRole.
 func (l *licenseBuilder) Revoke(ctx context.Context, g *v2.Grant) (annotations.Annotations, error) {
-	log := ctxzap.Extract(ctx)
-	principalID := g.Principal.Id.Resource
-
 	tier, ok := licensesMap[g.Entitlement.Resource.Id.Resource]
 	if !ok {
 		return nil, status.Errorf(codes.InvalidArgument, "unknown license %s", g.Entitlement.Resource.Id.Resource)
 	}
 
-	user, getAnnos, err := l.client.GetUser(ctx, principalID)
-	if err != nil {
-		if client.IsNotFoundError(err) {
-			log.Debug("license revoke: user not found, nothing to revoke", zap.String("user_id", principalID))
-			return mergeAnnotations(getAnnos, annotations.New(&v2.GrantAlreadyRevoked{})), nil
-		}
-		return getAnnos, fmt.Errorf("failed to read user %s for license revoke: %w", principalID, err)
-	}
+	return l.roleChange(g.Principal.Id.Resource, tier).revokeRole(ctx)
+}
 
-	if !slices.Contains(RolesPerLicense[tier], user.SiteRole) {
-		log.Debug("license revoke: user no longer in tier, nothing to revoke",
-			zap.String("user_id", principalID), zap.String("tier", tier), zap.String("site_role", user.SiteRole))
-		return mergeAnnotations(getAnnos, annotations.New(&v2.GrantAlreadyRevoked{})), nil
+// roleChange builds the shared role write for one user and tier.
+func (l *licenseBuilder) roleChange(userID, tier string) *roleChange {
+	return &roleChange{
+		client:  l.client,
+		label:   "license",
+		subject: tier,
+		userID:  userID,
+		holds:   func(siteRole string) bool { return slices.Contains(RolesPerLicense[tier], siteRole) },
 	}
-
-	if tier == unlicensed {
-		log.Debug("license revoke: user already Unlicensed (floor tier), nothing to remove",
-			zap.String("user_id", principalID))
-		return mergeAnnotations(getAnnos, annotations.New(&v2.GrantAlreadyRevoked{})), nil
-	}
-
-	putAnnos, err := l.client.UpdateUserSiteRole(ctx, principalID, unlicensed)
-	annos := mergeAnnotations(getAnnos, putAnnos)
-	if err != nil {
-		return annos, fmt.Errorf("failed to revoke license from user %s: %w", principalID, err)
-	}
-
-	return annos, nil
 }
 
 var _ connectorbuilder.ResourceProvisionerV2 = (*licenseBuilder)(nil)
