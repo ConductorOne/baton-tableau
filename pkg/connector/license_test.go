@@ -835,8 +835,8 @@ func (c *inProcessClient) ListGrants(ctx context.Context, in *v2.GrantsServiceLi
 
 // TestLicenseSync_TierEntitlementsShareExclusionGroup runs a real SDK sync and
 // reads the stored entitlements back, so it covers how the SDK stamps the
-// static member entitlement onto each tier: one shared, unscoped group with no
-// default or order, and entitlement IDs unchanged.
+// member entitlement onto each tier: one shared, unscoped group with exactly one
+// default (Unlicensed, order 0), and entitlement IDs unchanged.
 func TestLicenseSync_TierEntitlementsShareExclusionGroup(t *testing.T) {
 	ctx := context.Background()
 
@@ -872,12 +872,74 @@ func TestLicenseSync_TierEntitlementsShareExclusionGroup(t *testing.T) {
 	}
 
 	require.Len(t, got, len(licenses))
+	var defaults []string
 	for _, id := range []string{"license:creator:member", "license:explorer:member", "license:viewer:member", "license:unlicensed:member"} {
 		group, ok := got[id]
 		require.True(t, ok, "missing entitlement ID %s", id)
 		require.Equal(t, "tableau-license", group.GetExclusionGroupId())
 		require.False(t, group.GetScopeToResource(), "group must be shared across tiers, not scoped per resource")
-		require.False(t, group.GetIsDefault(), "no fallback tier is authorized")
 		require.Zero(t, group.GetOrder(), "no privilege order is authorized")
+		if group.GetIsDefault() {
+			defaults = append(defaults, id)
+		}
 	}
+	require.Equal(t, []string{"license:unlicensed:member"}, defaults, "Unlicensed must be the only default")
+}
+
+// TestLicense_SelfLockoutGuard asserts that a license Grant or Revoke that would
+// write a new role for the signed-in user is refused with FailedPrecondition and
+// no write, while no-op outcomes stay no-ops.
+func TestLicense_SelfLockoutGuard(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	revokeGrant := func(tier string) *v2.Grant {
+		return &v2.Grant{Entitlement: testLicenseEntitlement(tier), Principal: testUserPrincipal(testSelfUserID)}
+	}
+
+	t.Run("grant is refused", func(t *testing.T) {
+		t.Parallel()
+
+		var puts []recordedPut
+		l := newLicenseBuilder(newLicenseTestClient(t, map[string]string{testSelfUserID: viewer}, &puts))
+
+		_, _, err := l.Grant(ctx, testUserPrincipal(testSelfUserID), testLicenseEntitlement(creator))
+		require.Equal(t, codes.FailedPrecondition, status.Code(err))
+		require.Empty(t, puts)
+	})
+
+	t.Run("grant of the held tier stays a no-op", func(t *testing.T) {
+		t.Parallel()
+
+		var puts []recordedPut
+		l := newLicenseBuilder(newLicenseTestClient(t, map[string]string{testSelfUserID: viewer}, &puts))
+
+		_, annos, err := l.Grant(ctx, testUserPrincipal(testSelfUserID), testLicenseEntitlement(viewer))
+		require.NoError(t, err)
+		require.True(t, annos.Contains(&v2.GrantAlreadyExists{}))
+		require.Empty(t, puts)
+	})
+
+	t.Run("revoke is refused", func(t *testing.T) {
+		t.Parallel()
+
+		var puts []recordedPut
+		l := newLicenseBuilder(newLicenseTestClient(t, map[string]string{testSelfUserID: viewer}, &puts))
+
+		_, err := l.Revoke(ctx, revokeGrant(viewer))
+		require.Equal(t, codes.FailedPrecondition, status.Code(err))
+		require.Empty(t, puts)
+	})
+
+	t.Run("revoke of a tier not held stays a no-op", func(t *testing.T) {
+		t.Parallel()
+
+		var puts []recordedPut
+		l := newLicenseBuilder(newLicenseTestClient(t, map[string]string{testSelfUserID: viewer}, &puts))
+
+		annos, err := l.Revoke(ctx, revokeGrant(creator))
+		require.NoError(t, err)
+		require.True(t, annos.Contains(&v2.GrantAlreadyRevoked{}))
+		require.Empty(t, puts)
+	})
 }

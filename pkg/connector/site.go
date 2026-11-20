@@ -6,12 +6,15 @@ import (
 
 	v2 "github.com/conductorone/baton-sdk/pb/c1/connector/v2"
 	"github.com/conductorone/baton-sdk/pkg/annotations"
+	"github.com/conductorone/baton-sdk/pkg/connectorbuilder"
 	ent "github.com/conductorone/baton-sdk/pkg/types/entitlement"
 	grant "github.com/conductorone/baton-sdk/pkg/types/grant"
 	rs "github.com/conductorone/baton-sdk/pkg/types/resource"
 	"github.com/conductorone/baton-tableau/pkg/client"
 	"github.com/grpc-ecosystem/go-grpc-middleware/logging/zap/ctxzap"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Valid Tableau REST API site roles.
@@ -93,8 +96,13 @@ func (s *siteBuilder) List(ctx context.Context, _ *v2.ResourceId, _ rs.SyncOpAtt
 func (s *siteBuilder) Entitlements(_ context.Context, resource *v2.Resource, _ rs.SyncOpAttrs) ([]*v2.Entitlement, *rs.SyncOpResults, error) {
 	var rv []*v2.Entitlement
 	for _, role := range roles {
+		group := ent.WithExclusionGroup(siteRoleExclusionGroup(resource))
+		if role == roles[unlicensed] {
+			group = ent.WithExclusionGroupDefault(siteRoleExclusionGroup(resource), 0)
+		}
 		permissionOptions := []ent.EntitlementOption{
 			ent.WithGrantableTo(resourceTypeUser),
+			group,
 			ent.WithDescription(fmt.Sprintf("Role in %s Tableau site", resource.DisplayName)),
 			ent.WithDisplayName(fmt.Sprintf("%s Site %s", resource.DisplayName, role)),
 		}
@@ -135,47 +143,101 @@ func (s *siteBuilder) Grants(ctx context.Context, resource *v2.Resource, opts rs
 	return rv, &rs.SyncOpResults{NextPageToken: nextToken}, nil
 }
 
-func (s *siteBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) (annotations.Annotations, error) {
+// siteRoleExclusionGroup is shared by one site's Site Role entitlements: a user
+// holds one role per site, and the site ID keeps different sites apart.
+// Unlicensed is the group's default (order 0).
+func siteRoleExclusionGroup(site *v2.Resource) string {
+	return "site-role:" + site.Id.Resource
+}
+
+// errServerAdminProtected refuses a grant over a ServerAdministrator: a
+// server-wide role this connector cannot restore, so it could not undo the write.
+func errServerAdminProtected(action, userID string) error {
+	return status.Errorf(codes.FailedPrecondition,
+		"site role: cannot %s for user %s: they hold %s, a server-wide role this connector cannot restore; a server administrator has to change it in Tableau",
+		action, userID, serverAdministrator)
+}
+
+// apiRoleForSlug maps a Site Role entitlement slug back to the Tableau API role name.
+func apiRoleForSlug(slug string) (string, bool) {
+	for key, value := range roles {
+		if value == slug {
+			return key, true
+		}
+	}
+	return "", false
+}
+
+// Grant sets the user's site role to the entitlement's role. A user who already
+// holds it gets GrantAlreadyExists; a ServerAdministrator is refused with
+// FailedPrecondition. Any other role is replaced, reporting GrantReplaced. A
+// write returns the new grant, built like Grants() emits it; other paths none.
+func (s *siteBuilder) Grant(ctx context.Context, principal *v2.Resource, entitlement *v2.Entitlement) ([]*v2.Grant, annotations.Annotations, error) {
 	roleName, err := parseEntitlementSlug(entitlement.Id)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse role from entitlement ID: %w", err)
+		return nil, nil, status.Errorf(codes.InvalidArgument, "failed to parse role from entitlement ID: %v", err)
 	}
 	principalID := principal.Id.Resource
 
-	var apiRoleName string
-	for key, value := range roles {
-		if value == roleName {
-			apiRoleName = key
-			break
-		}
-	}
-
-	if apiRoleName == "" {
-		return nil, fmt.Errorf("unknown role: %s", roleName)
+	apiRoleName, ok := apiRoleForSlug(roleName)
+	if !ok {
+		return nil, nil, status.Errorf(codes.InvalidArgument, "unknown role: %s", roleName)
 	}
 
 	if nonGrantableRoles[apiRoleName] {
-		return nil, fmt.Errorf("role %q is not assigned by this connector (it exists only on Tableau Server)", apiRoleName)
+		return nil, nil, fmt.Errorf("role %q is not assigned by this connector (it exists only on Tableau Server)", apiRoleName)
 	}
 
-	annos, err := s.client.UpdateUserSiteRole(ctx, principalID, apiRoleName)
-	if err != nil {
-		return annos, fmt.Errorf("failed to grant %s role to user %s: %w", roleName, principalID, err)
+	rc := s.roleChange(principalID, apiRoleName)
+	rc.refuseGrant = func(siteRole string) error {
+		if siteRole != serverAdministrator {
+			return nil
+		}
+		return errServerAdminProtected("grant "+apiRoleName, principalID)
+	}
+	rc.replacedGrantID = func(siteRole string) (string, bool) {
+		oldSlug, known := roles[siteRole]
+		if !known {
+			return "", false
+		}
+		return grant.NewGrantID(principal.Id, ent.NewPermissionEntitlement(entitlement.Resource, oldSlug)), true
 	}
 
-	return annos, nil
+	rc.newGrant = func() *v2.Grant {
+		return grant.NewGrant(entitlement.Resource, roleName, principal.Id)
+	}
+
+	return rc.grantRole(ctx, apiRoleName)
 }
 
-func (s *siteBuilder) Revoke(ctx context.Context, grant *v2.Grant) (annotations.Annotations, error) {
-	principalID := grant.Principal.Id.Resource
-
-	annos, err := s.client.UpdateUserSiteRole(ctx, principalID, unlicensed)
+// Revoke resets the user to Unlicensed while they still hold the revoked role,
+// including any administrator role. A missing user, a different role, or an
+// already Unlicensed user is GrantAlreadyRevoked with no write.
+func (s *siteBuilder) Revoke(ctx context.Context, g *v2.Grant) (annotations.Annotations, error) {
+	roleName, err := parseEntitlementSlug(g.Entitlement.Id)
 	if err != nil {
-		return annos, fmt.Errorf("failed to revoke site role from user %s: %w", principalID, err)
+		return nil, status.Errorf(codes.InvalidArgument, "failed to parse role from entitlement ID: %v", err)
+	}
+	apiRoleName, ok := apiRoleForSlug(roleName)
+	if !ok {
+		return nil, status.Errorf(codes.InvalidArgument, "unknown role: %s", roleName)
 	}
 
-	return annos, nil
+	return s.roleChange(g.Principal.Id.Resource, apiRoleName).revokeRole(ctx)
 }
+
+// roleChange builds the shared role write for one user and site role.
+func (s *siteBuilder) roleChange(userID, apiRoleName string) *roleChange {
+	return &roleChange{
+		client:  s.client,
+		label:   "site role",
+		subject: apiRoleName,
+		userID:  userID,
+		holds:   func(siteRole string) bool { return siteRole == apiRoleName },
+	}
+}
+
+var _ connectorbuilder.ResourceProvisionerV2 = (*siteBuilder)(nil)
 
 func newSiteBuilder(client *client.Client) *siteBuilder {
 	return &siteBuilder{
